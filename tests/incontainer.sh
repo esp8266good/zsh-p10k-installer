@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 在容器裡跑一個 fixture:佈置初始狀態 → 安裝 → 驗證 → 重跑驗證冪等 → 解除安裝驗證還原。
-# 用法: incontainer.sh <fixture-name> <installer-path>
-# check() 用 eval 跑字串,shellcheck 看不到字串裡用到的變數。
+# 在容器裡跑一個 fixture：佈置初始狀態 → 安裝 → 驗證 → 重跑確認沒有變動 → 解除安裝驗證還原。
+# 用法： incontainer.sh <fixture-name> <installer-path>
+# check() 用 eval 跑字串，shellcheck 看不到字串裡用到的變數。
 # shellcheck disable=SC2034
 set -uo pipefail
 
@@ -69,8 +69,8 @@ EOF
 
 # v2 原封不動寫出來的 .zshrc。
 #
-# 必須逐字——v3.1 的 v2 骨架判定要求這 40 行全中且順序一致,少一行註解就判不出來。
-# 之前這裡是「大意相同」的簡化版,結果新判定把它當成非 v2 產物,測不到 --clean-v2。
+# 必須逐字照抄：v3.1 的 v2 骨架判定要求這 40 行全中且順序一致，少一行註解就判不出來。
+# 之前這裡是「大意相同」的簡化版，結果新判定把它當成非 v2 產物，測不到 --clean-v2。
 v2_template() {
   cat <<'EOF'
 # Keep non-interactive zsh clean for agents, scripts, scp, rsync, CI, and command wrappers.
@@ -121,10 +121,10 @@ seed_v2_zshrc() {
   echo "$SENTINEL" >> "$HOME/.zshrc"
 }
 
-# 重現樹莓派:v2 骨架 + 使用者自己插在「骨架中間」的行。
+# 重現樹莓派：v2 骨架 + 使用者自己插在「骨架中間」的行。
 #
-# 關鍵是最後那個 `if [ -f ~/.bash_aliases ]; then … fi` —— 它的 fi 跟骨架裡的 fi
-# 一字不差。按文字刪 v2 的行會刪掉它,留下孤兒 if,zsh -n 就會炸。
+# 關鍵是最後那個 `if [ -f ~/.bash_aliases ]; then … fi`，它的 fi 跟骨架裡的 fi
+# 一字不差。按文字刪 v2 的行會刪掉它，留下孤兒 if,zsh -n 就會炸。
 seed_v2_with_user_edits() {
   v2_template \
     | sed '/^export PATH$/a\
@@ -148,13 +148,13 @@ EOF
   echo "$SENTINEL" >> "$HOME/.zshrc"
 }
 
-# 有桌面的機器:xsessions 裡真的有 session 檔。
+# 有桌面的機器：xsessions 裡真的有 session 檔。
 seed_desktop() {
   sudo mkdir -p /usr/share/xsessions
   echo '[Desktop Entry]' | sudo tee /usr/share/xsessions/LXDE.desktop >/dev/null
 }
 
-# 沒有桌面,但 ssh 帶了 X11 forwarding —— DISPLAY 有值。
+# 沒有桌面，但 ssh 帶了 X11 forwarding，所以 DISPLAY 有值。
 # 重現工作站被誤判成「有圖形介面」的那個情境。
 seed_forwarded_display() {
   sudo rm -rf /usr/share/xsessions /usr/share/wayland-sessions
@@ -250,12 +250,12 @@ setup() {
       seed_extra_bashrc
       ;;
     hook-fallback)
-      # chsh 走不通時的退路。把 zsh 從 /etc/shells 拿掉就會逼出這條路徑,
+      # chsh 走不通時的退路。把 zsh 從 /etc/shells 拿掉就會逼出這條路徑，
       # 不必真的去弄一顆自編的 zsh。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
       sudo sed -i '/zsh/d' /etc/shells
-      # 這台有 .profile 但沒有 .bash_profile —— 共用主機就是這個形狀。
-      # bash 的 login shell 只讀第一個存在的,憑空生一個 .bash_profile
+      # 這台有 .profile 但沒有 .bash_profile，共用主機就是這個形狀。
+      # bash 的 login shell 只讀第一個存在的，憑空生一個 .bash_profile
       # 會讓整份 .profile 靜靜地失效。
       rm -f "$HOME/.bash_profile"
       cat > "$HOME/.profile" <<'EOF'
@@ -264,8 +264,8 @@ EOF
       seed_extra_bashrc
       ;;
     dotfiles-symlink)
-      # stow / chezmoi 的形狀:.zshrc 與 .zshenv 都是指進 dotfile repo 的 symlink。
-      # 用 mv 蓋掉的話 symlink 會變成一般檔案,dotfile repo 就此收不到改動。
+      # stow / chezmoi 的形狀：.zshrc 與 .zshenv 都是指進 dotfile repo 的 symlink。
+      # 用 mv 蓋掉的話 symlink 會變成一般檔案，dotfile repo 就此收不到改動。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
       mkdir -p "$HOME/dotfiles"
       printf '# my dotfiles zshrc\n%s\n' "$SENTINEL" > "$HOME/dotfiles/zshrc"
@@ -275,14 +275,14 @@ EOF
       seed_extra_bashrc
       ;;
     sticky-options)
-      # 第一次帶了選項,之後重跑都不帶。選項必須被記住,不能悄悄變回預設值。
+      # 第一次帶了選項，之後重跑都不帶。選項必須被記住，不能悄悄變回預設值。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
       printf '# existing zshrc\n%s\n' "$SENTINEL" > "$HOME/.zshrc"
       seed_extra_bashrc
       EXTRA_ARGS="--omz-update reminder --no-chsh"
       ;;
     ancient-awk)
-      # 這個 fixture 只在 debian:buster 映像上跑,那裡的 awk 是 mawk 1.3.3。
+      # 這個 fixture 只在 debian:buster 映像上跑，那裡的 awk 是 mawk 1.3.3。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
       seed_extra_bashrc
       ;;
@@ -301,7 +301,7 @@ setup
 [ -f "$HOME/.zshrc" ] && cp "$HOME/.zshrc" /tmp/zshrc.orig || : > /tmp/zshrc.orig
 [ -f "$HOME/.zshenv" ] && cp "$HOME/.zshenv" /tmp/zshenv.orig || rm -f /tmp/zshenv.orig
 STATE_FILE="$HOME/.config/zsh-p10k-install/options"
-# 備份的權限必須跟原檔一樣。少了 cp -p 的話 600 的 .zshrc 會備份成 644,
+# 備份的權限必須跟原檔一樣。少了 cp -p 的話 600 的 .zshrc 會備份成 644，
 # 等於把使用者的私人設定攤開給同機其他人看。
 if [ -f "$HOME/.zshrc" ]; then
   chmod 600 "$HOME/.zshrc"
@@ -315,7 +315,7 @@ echo "--- 第一次安裝 ---"
 bash "$INSTALLER" -y $EXTRA_ARGS > /tmp/run1.log 2>&1
 RC1=$?
 if [ "$RC1" -ne 0 ]; then
-  bad "安裝結束碼為 0(實際 $RC1)"
+  bad "安裝結束碼為 0（實際 $RC1）"
   tail -30 /tmp/run1.log
 else
   ok "安裝結束碼為 0"
@@ -331,13 +331,13 @@ check "instant prompt 區段只有一個"     '[ "$(grep -c "^if \[\[ -r \"\${XD
 check "oh-my-zsh.sh 只被 source 一次"   '[ "$(grep -cE "^[[:space:]]*(source|\.)[[:space:]]+.*oh-my-zsh\.sh" "$HOME/.zshrc")" = 1 ]'
 check "MobaXterm bindkey 有寫入"        'grep -q "beginning-of-line" "$HOME/.zshrc"'
 check ".bash_aliases 有被 source"       'grep -q "\.bash_aliases" "$HOME/.zshrc"'
-# PATH 現在只寫在 .zshenv。head 區段刻意不再寫第二份:.zshenv 一定先讀,
-# 放 .zshrc 是純粹多餘,而且每個互動 shell 都會把那三個目錄重新推到最前面。
+# PATH 現在只寫在 .zshenv。head 區段刻意不再寫第二份：.zshenv 一定先讀，
+# 放 .zshrc 是純粹多餘，而且每個互動 shell 都會把那三個目錄重新推到最前面。
 check "PATH 那一行寫在 .zshenv"         'grep -qF "export PATH=\$HOME/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH" "$HOME/.zshenv"'
 check "head 區段沒有重複 PATH"          '[ "$(sed -n "/head >>>/,/head <<</p" "$HOME/.zshrc" | grep -cF "export PATH=\$HOME/bin")" = 0 ]'
 check "head 區段沒有重複 typeset -U"    '[ "$(sed -n "/head >>>/,/head <<</p" "$HOME/.zshrc" | grep -c "^typeset -U path PATH$")" = 0 ]'
 [ "$FIXTURE" != "sticky-options" ] && \
-check "omz 更新提示預設為 prompt"       'grep -q "zstyle .:omz:update. mode prompt" "$HOME/.zshrc" || grep -q "已經有,所以我們不寫" /tmp/run1.log'
+check "omz 更新提示預設為 prompt"       'grep -q "zstyle .:omz:update. mode prompt" "$HOME/.zshrc" || grep -q "已經有，所以我們不寫" /tmp/run1.log'
 check "~/.p10k.zsh 已產生且夠大"        '[ "$(wc -c < "$HOME/.p10k.zsh")" -gt 90000 ]'
 check "互動式 zsh 能載入"               '"$ZSH_BIN" -i -c "print READY" 2>/dev/null | grep -q READY'
 check "備份沒有散在家目錄"              '! find "$HOME" -maxdepth 1 -name ".zshrc.backup.*" | grep -q .'
@@ -349,12 +349,12 @@ case "$FIXTURE" in
     ;;
   sticky-options)
     check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
-    check "--no-chsh 生效,login shell 維持 bash" 'getent passwd tester | grep -q "bash$"'
+    check "--no-chsh 生效，login shell 維持 bash" 'getent passwd tester | grep -q "bash$"'
     ;;
   hook-fallback)
     check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
-    # 這個 fixture 刻意讓 chsh 走不通,所以 login shell 應該「維持 bash」。
-    # 事前報告也必須先講出來,而不是承諾改 shell 然後失敗。
+    # 這個 fixture 刻意讓 chsh 走不通，所以 login shell 應該「維持 bash」。
+    # 事前報告也必須先講出來，而不是承諾改 shell 然後失敗。
     check "login shell 維持 bash"       'getent passwd tester | grep -q "bash$"'
     check "報告事先講明 chsh 走不通"     'grep -q "chsh 走不通" /tmp/run1.log'
     ;;
@@ -366,8 +366,8 @@ esac
 
 case "$FIXTURE" in
   native-omz)
-    check "pyenv 被判定為已存在而跳過"  'grep -q "已在 .zshrc 裡,跳過.*pyenv" /tmp/run1.log'
-    check "nvm 被判定為已存在而跳過"    'grep -q "已在 .zshrc 裡,跳過.*nvm" /tmp/run1.log'
+    check "pyenv 被判定為已存在而跳過"  'grep -q "已在 .zshrc 裡，跳過.*pyenv" /tmp/run1.log'
+    check "nvm 被判定為已存在而跳過"    'grep -q "已在 .zshrc 裡，跳過.*nvm" /tmp/run1.log'
     check "使用者的 HIST_STAMPS 還在"   'grep -q "HIST_STAMPS" "$HOME/.zshrc"'
     check "bindkey 沒有重複寫入"        '[ "$(grep -c "beginning-of-line" "$HOME/.zshrc")" = 1 ]'
     check "附加模式沒有插入 interactive guard" \
@@ -392,26 +392,26 @@ case "$FIXTURE" in
     check "--clean-v2 後翻回完整模式"   'grep -q "完整模式" /tmp/run1.log'
     check "v2 骨架已被收走"             '! grep -q "User-local binaries, useful for no-sudo" "$HOME/.zshrc"'
     check "v2 的 oh-my-zsh.sh 只剩一份" '[ "$(grep -cE "^[[:space:]]*(source|\.)[[:space:]]+.*oh-my-zsh\.sh" "$HOME/.zshrc")" = 1 ]'
-    # 這幾條是 --clean-v2 唯一會弄壞使用者檔案的路徑,一條都不能少
+    # 這幾條是 --clean-v2 唯一會弄壞使用者檔案的路徑，一條都不能少
     check "使用者的 bash_aliases if/fi 完整" \
           '[ "$(grep -c "^if \[ -f ~/.bash_aliases \]; then$" "$HOME/.zshrc")" -ge 1 ]'
     check "使用者的 pyenv 行還在"       'grep -q "eval \"\$(pyenv init - zsh)\"" "$HOME/.zshrc"'
     check "p10k configure 寫的那行還在" 'grep -qF "[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh" "$HOME/.zshrc"'
     check "使用者原有內容保留 (sentinel)" 'grep -qF "$SENTINEL" "$HOME/.zshrc"'
-    check "沒有孤兒 fi(zsh -n 已驗)"   '"$ZSH_BIN" -n "$HOME/.zshrc"'
+    check "沒有孤兒 fi（zsh -n 已驗）"   '"$ZSH_BIN" -n "$HOME/.zshrc"'
     ;;
   has-desktop)
     check "判定為有桌面"                'grep -q "桌面環境        這台有" /tmp/run1.log'
     check "字型有安裝"                  '[ -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
     ;;
   forwarded-display)
-    # DISPLAY 有值但機器沒有桌面 —— 舊版就是在這裡把一台工作站判成「有圖形介面」的
+    # DISPLAY 有值但機器沒有桌面。舊版就是在這裡把一台工作站判成「有圖形介面」的
     check "DISPLAY 有值不會騙過偵測"    'grep -q "桌面環境        沒有" /tmp/run1.log'
     check "沒有裝字型"                  '[ ! -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
     ;;
   hook-fallback)
     check "chsh 走不通時改裝 hook"      'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
-    # 新生的 .bash_profile 必須把 .profile 讀回來,否則使用者的 PATH / proxy /
+    # 新生的 .bash_profile 必須把 .profile 讀回來，否則使用者的 PATH / proxy /
     # conda 會在下次登入時無聲消失
     check "新建的 .bash_profile 有 source .profile" \
           'grep -q "\. ~/.profile" "$HOME/.bash_profile"'
@@ -430,17 +430,17 @@ case "$FIXTURE" in
   ancient-awk)
     check "awk 是 mawk 1.3.3"           'mawk -W version 2>&1 | head -1 | grep -q "1.3.3"'
     check ".zshrc.local 有產生"         '[ -f "$HOME/.zshrc.local" ]'
-    check "抽取真的有跑到(抓到自訂的 export)" \
+    check "抽取真的有跑到（抓到自訂的 export）" \
           'grep -q "MY_CUSTOM_VAR" "$HOME/.zshrc.local"'
     check "發行版預設 alias 被濾掉"      '! grep -q "alias l=.ls -CF" "$HOME/.zshrc.local"'
     ;;
 esac
 
 # --- 還原點 ---
-# 本來沒有 .zshrc 的機器不會產生還原點:沒有東西被覆蓋,備份也就沒有意義。
+# 本來沒有 .zshrc 的機器不會產生還原點：沒有東西被覆蓋，備份也就沒有意義。
 if [ -n "$ORIG_MODE" ]; then
   check "還原點目錄已建立"              '[ -d "$HOME/.zsh-p10k-backups" ]'
-  # 同一次執行改到的檔案必須在同一個還原點。拆成兩個的話,--rollback 選哪個都只還原一半。
+  # 同一次執行改到的檔案必須在同一個還原點。拆成兩個的話，--rollback 選哪個都只還原一半。
   check "同一次安裝只產生一個還原點"     '[ "$(find "$HOME/.zsh-p10k-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1 ]'
   if [ -f /tmp/zshenv.orig ]; then
     check "還原點裡同時有 .zshrc 與 .zshenv" \
@@ -456,9 +456,9 @@ if [ -n "$ORIG_MODE" ]; then
   check "還原後 .zshenv 與安裝前相同"    'cmp -s /tmp/zshenv.orig "$HOME/.zshenv"'
   [ "$FIXTURE" = "dotfiles-symlink" ] && \
   check "還原後 .zshrc 仍然是 symlink"   '[ -L "$HOME/.zshrc" ]'
-  # 還原本身也要能反悔:還原前的狀態要另外存成一個新的還原點
+  # 還原本身也要能反悔：還原前的狀態要另外存成一個新的還原點
   check "還原前的狀態有被存起來"         '[ "$(find "$HOME/.zsh-p10k-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)" -ge 2 ]'
-  # 還原完再裝回去,後面的冪等與解除安裝測試才有東西可測
+  # 還原完再裝回去，後面的「重跑沒有變動」與解除安裝測試才有東西可測
   # shellcheck disable=SC2086
   bash "$INSTALLER" -y $EXTRA_ARGS > /tmp/run1b.log 2>&1
 else
@@ -472,15 +472,15 @@ if [ -f "$HOME/.zshrc.local" ]; then
 fi
 check "PS1 / shopt 沒有被搬進 .zshrc.local" \
       '! grep -qE "^# *(PS1|shopt)" "$HOME/.zshrc.local" 2>/dev/null'
-# 白名單處理過的工具不該再出現在 .zshrc.local。大小寫都要濾掉——
-# 共用主機的 .bashrc 寫的是 PYENV_ROOT,只比對小寫的 pyenv 會漏。
+# 白名單處理過的工具不該再出現在 .zshrc.local。大小寫都要濾掉，
+# 共用主機的 .bashrc 寫的是 PYENV_ROOT，只比對小寫的 pyenv 會漏。
 check "白名單工具沒有被重複抽進 .zshrc.local" \
       '! grep -qiE "^# *export +(PYENV_ROOT|NVM_DIR|GOPATH)" "$HOME/.zshrc.local" 2>/dev/null'
-# 腳本自己寫進 .bash_profile 的 hook 不能被自己抽回來,否則每重裝一次就多抽一次
+# 腳本自己寫進 .bash_profile 的 hook 不能被自己抽回來，否則每重裝一次就多抽一次
 check "沒有把自己寫的 hook 抽進 .zshrc.local" \
       '! grep -q "export SHELL=" "$HOME/.zshrc.local" 2>/dev/null'
 
-echo "--- 第二次安裝(冪等) ---"
+echo "--- 第二次安裝（應該沒有變動） ---"
 cp "$HOME/.zshrc" /tmp/zshrc.run1
 bash "$INSTALLER" -y > /tmp/run2.log 2>&1
 RC2=$?
@@ -507,8 +507,8 @@ check "解除安裝結束碼為 0"              '[ "$RC3" -eq 0 ]'
 check ".zshrc 區段已移除"               '! grep -q "zsh-p10k-install:" "$HOME/.zshrc"'
 check ".zshenv 區段已移除"              '! grep -q "zsh-p10k-install:" "$HOME/.zshenv" 2>/dev/null'
 if [ "$FIXTURE" = "v2-with-user-edits" ]; then
-  # 這個 fixture 用了 --clean-v2,v2 骨架是「刻意」被收走的,還原不回原檔是對的。
-  # 要驗的是:收走的只有 v2 的行,使用者自己的一行都沒少。
+  # 這個 fixture 用了 --clean-v2,v2 骨架是「刻意」被收走的，還原不回原檔是對的。
+  # 要驗的是：收走的只有 v2 的行，使用者自己的一行都沒少。
   check "解除安裝後 v2 骨架確實不在了" \
         '! grep -q "User-local binaries, useful for no-sudo" "$HOME/.zshrc"'
   check "解除安裝後使用者的行都還在" \

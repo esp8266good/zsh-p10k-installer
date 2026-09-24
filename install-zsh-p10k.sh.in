@@ -4,16 +4,16 @@
 #
 # 在目標機上安裝 / 修補 zsh + oh-my-zsh + Powerlevel10k。
 #
-# 設計原則(詳見同目錄的 CONTEXT.md 與 docs/adr/0001):
+# 設計原則（詳見同目錄的 CONTEXT.md 與 docs/adr/0001）：
 #   1. 目標機上原本就有的東西不能弄丟。腳本只擁有 ~/.zshrc 裡兩個以標記包起來的
-#      區段(head / tail),區段外的一切都是使用者的,永不修改。
-#   2. 重跑必須是安全動作。已經裝好的元件預設不動,要更新請加 --update。
-#   3. 動手之前先印出「事前報告」:偵測到什麼、要改哪些檔案、要跑哪些 sudo 指令。
+#      區段（head / tail），區段外的一切都是使用者的，永不修改。
+#   2. 重跑必須是安全動作。已經裝好的元件預設不動，要更新請加 --update。
+#   3. 動手之前先印出「事前報告」：偵測到什麼、要改哪些檔案、要跑哪些 sudo 指令。
 #   4. 永遠不執行 apt upgrade / dist-upgrade。
 #
-# 用法:
+# 用法：
 #   bash install-zsh-p10k.sh              一般安裝
-#   bash install-zsh-p10k.sh --dry-run    只印報告,不動任何東西
+#   bash install-zsh-p10k.sh --dry-run    只印報告，不動任何東西
 #   bash install-zsh-p10k.sh --update     順便更新已安裝的 oh-my-zsh / p10k / plugin
 #   bash install-zsh-p10k.sh --uninstall  移除本腳本寫入的區段與 hook
 #   bash install-zsh-p10k.sh --help       完整選項
@@ -27,16 +27,16 @@ set -euo pipefail
 
 SCRIPT_VERSION="3.2.0"
 
-# awk 相容性:這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別([[:space:]] 之類)。
+# awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
-# 理由是 mawk 1.3.3(1996 年版,Raspbian buster 到現在還在出貨)不認得它們,
-# 而且是「靜默不匹配」——不報錯、不警告,regex 就是永遠不成立。
-# 樹莓派上 ~/.zshrc.local 一直產不出來,就是這麼來的。
+# 理由是 mawk 1.3.3（1996 年版，Raspbian buster 到現在還在出貨）不認得它們，
+# 而且是「靜默不匹配」：不報錯、不警告，regex 就是永遠不成立。
+# 樹莓派上 ~/.zshrc.local 一直產不出來，就是這麼來的。
 #
-# awk 程式裡要匹配空白請寫 [ \t](awk 會把 \t 解成 tab,mawk 1.3.3 也會)。
-# grep -E 不受影響,但 [ \t] 在 grep 的中括號裡是「反斜線或 t」,不是 tab,
+# awk 程式裡要匹配空白請寫 [ \t]（awk 會把 \t 解成 tab,mawk 1.3.3 也會）。
+# grep -E 不受影響，但 [ \t] 在 grep 的中括號裡是「反斜線或 t」，不是 tab，
 # 所以 grep 要用 $SP 這個帶字面 tab 的變數。
-# build.sh 會掃描所有 awk 程式,出現 [[: 就讓建置失敗。
+# build.sh 會掃描所有 awk 程式，出現 [[: 就讓建置失敗。
 SP="[ $(printf '\t')]"
 
 BLOCK_HEAD_BEGIN="# >>> zsh-p10k-install: head >>>"
@@ -64,15 +64,15 @@ ZSHRC="$HOME/.zshrc"
 ZSHENV="$HOME/.zshenv"
 ZSHRC_LOCAL="$HOME/.zshrc.local"
 
-# 還原點:同一次執行改到的所有檔案,備份進同一個時間戳目錄。
+# 還原點：同一次執行改到的所有檔案，備份進同一個時間戳目錄。
 #
-# 舊版把備份散在家目錄(~/.zshrc.backup.20260816-171328)。那樣沒辦法回答
-# 「把我這台還原到上禮拜三」——因為 .zshrc 跟 .zshenv 各自最新的那一份
-# 可能來自不同次執行,分別還原就會湊出一個從來沒存在過的組合。
+# 舊版把備份散在家目錄（~/.zshrc.backup.20260816-171328）。那樣沒辦法回答
+# 「把我這台還原到上禮拜三」，因為 .zshrc 跟 .zshenv 各自最新的那一份
+# 可能來自不同次執行，分別還原就會湊出一個從來沒存在過的組合。
 BACKUP_ROOT="$HOME/.zsh-p10k-backups"
 ROLLBACK_LIST_LIMIT=10
 
-# 需要的套件(只有真的缺才會裝)
+# 需要的套件（只有真的缺才會裝）
 REQUIRED_COMMANDS=(zsh git curl)
 
 # ---------------------------------------------------------------------------
@@ -91,46 +91,46 @@ OPT_CLEAN_V2=0
 OPT_ROLLBACK=0
 OPT_OMZ_UPDATE="prompt"
 
-# 命令列上明講過的選項。沒明講的,沿用上一次安裝時的選擇(見 load_saved_options)。
+# 命令列上明講過的選項。沒明講的，沿用上一次安裝時的選擇（見 load_saved_options）。
 OPTS_GIVEN=" "
 
-# 上一次安裝時的選擇存在這裡。只記會影響「裝完之後長什麼樣子」的選項;
-# --dry-run、--update 這種只管這一次怎麼跑的,不記。
+# 上一次安裝時的選擇存在這裡。只記會影響「裝完之後長什麼樣子」的選項；
+# --dry-run、--update 這種只管這一次怎麼跑的，不記。
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh-p10k-install"
 STATE_FILE="$STATE_DIR/options"
 
 usage() {
   cat <<'USAGE'
-install-zsh-p10k.sh — zsh + oh-my-zsh + Powerlevel10k 安裝器
+install-zsh-p10k.sh：zsh + oh-my-zsh + Powerlevel10k 安裝器
 
-  --dry-run             只印事前報告,不修改任何檔案
+  --dry-run             只印事前報告，不修改任何檔案
   --update              順便 git pull 已安裝的 oh-my-zsh / p10k / plugin
-                        (預設不更新:重跑一次應該是安全動作)
-  --omz-update MODE     oh-my-zsh 自己的更新提示要怎麼做,預設 prompt
-                        prompt   每 13 天問你一次要不要更新(oh-my-zsh 出廠值)
-                        auto     自動更新,不問
-                        reminder 只提醒,不動手
+                        （預設不更新：重跑一次應該是安全動作）
+  --omz-update MODE     oh-my-zsh 自己的更新提示要怎麼做，預設 prompt
+                        prompt   每 13 天問你一次要不要更新（oh-my-zsh 出廠值）
+                        auto     自動更新，不問
+                        reminder 只提醒，不動手
                         disabled 完全關掉
   --uninstall           移除本腳本寫入 ~/.zshrc 的兩個區段與 ~/.bash_profile hook
                         不會刪除 oh-my-zsh / p10k / 字型 / ~/.zshrc.local
-  --rollback            列出還原點,選一個把設定檔還原回去
+  --rollback            列出還原點，選一個把設定檔還原回去
   --clean-v2            把 v2 舊版寫進 ~/.zshrc / ~/.zshenv / ~/.bash_profile 的
-                        東西收回來。預設不做——那些行現在位於使用者區段,
-                        沒有你明講,本腳本不動使用者區段。
+                        東西收回來。預設不做，因為那些行現在位於使用者區段，
+                        沒有你明講，本腳本不動使用者區段。
   --no-chsh             不改變 login shell
   --chsh                取消上次的 --no-chsh
-  --no-fonts            不在目標機安裝字型(即使這台真的有桌面)
+  --no-fonts            不在目標機安裝字型（即使這台真的有桌面）
   --fonts               取消上次的 --no-fonts
   --refresh-local       重新從 .bashrc 抽取 export/alias
-                        (~/.zshrc.local 已存在時,結果寫到 ~/.zshrc.local.new)
+                        （~/.zshrc.local 已存在時，結果寫到 ~/.zshrc.local.new）
   --interactive-guard   在「附加模式」也插入非互動 shell 的提前 return
-                        (預設只有「完整模式」會插入,避免改變既有機器的行為)
+                        （預設只有「完整模式」會插入，避免改變既有機器的行為）
   --no-interactive-guard  取消上次的 --interactive-guard
 
   --omz-update / --no-chsh / --no-fonts / --interactive-guard 會記在
-  ~/.config/zsh-p10k-install/options,重跑時沒帶就沿用上次的選擇。
+  ~/.config/zsh-p10k-install/options，重跑時沒帶就沿用上次的選擇。
 
-  --yes, -y             不等待確認,直接執行
+  --yes, -y             不等待確認，直接執行
   --help, -h            顯示這段說明
 USAGE
 }
@@ -153,14 +153,14 @@ while [ $# -gt 0 ]; do
     --omz-update=*) OPT_OMZ_UPDATE="${1#*=}"; OPTS_GIVEN+="omz_update " ;;
     -y|--yes) OPT_YES=1 ;;
     -h|--help) usage; exit 0 ;;
-    *) printf '未知選項: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) printf '未知選項：%s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
 case "$OPT_OMZ_UPDATE" in
   prompt|auto|reminder|disabled) ;;
-  *) printf '--omz-update 只接受 prompt / auto / reminder / disabled,收到:%s\n' \
+  *) printf '--omz-update 只接受 prompt / auto / reminder / disabled，收到：%s\n' \
        "$OPT_OMZ_UPDATE" >&2; exit 2 ;;
 esac
 
@@ -183,8 +183,8 @@ die()   { err "$1"; exit 1; }
 
 has_command() { command -v "$1" >/dev/null 2>&1; }
 
-# /dev/tty 這個節點在沒有控制終端的環境(ssh host command、cron、容器)裡
-# 照樣存在,-r / -w 也會過,但真的開下去會噴 "No such device or address"。
+# /dev/tty 這個節點在沒有控制終端的環境（ssh host command、cron、容器）裡
+# 照樣存在，-r / -w 也會過，但真的開下去會噴 "No such device or address"。
 # 所以要實際開一次才算數。
 have_tty() { { true < /dev/tty; } >/dev/null 2>&1; }
 
@@ -194,22 +194,22 @@ have_tty() { { true < /dev/tty; } >/dev/null 2>&1; }
 
 if [ "$(id -u)" -eq 0 ]; then
   err "請不要用 root 或 sudo 執行這支腳本。"
-  err "它會寫入 ~/.zshrc、~/.oh-my-zsh 等使用者檔案,需要時才會自己呼叫 sudo。"
+  err "它會寫入 ~/.zshrc、~/.oh-my-zsh 等使用者檔案，需要時才會自己呼叫 sudo。"
   exit 1
 fi
 
 if [ -z "${BASH_VERSION:-}" ]; then
-  die "請用 bash 執行:bash install-zsh-p10k.sh"
+  die "請用 bash 執行：bash install-zsh-p10k.sh"
 fi
 
 # ---------------------------------------------------------------------------
 # managed block 的讀寫
 # ---------------------------------------------------------------------------
 
-# 把 .zshrc 裡屬於本腳本的區段拿掉,只留使用者自己的內容。
+# 把 .zshrc 裡屬於本腳本的區段拿掉，只留使用者自己的內容。
 #
-# 連同區段邊界上那一行分隔用的空行一起吃掉,否則每次「安裝 → 解除安裝」
-# 都會在檔案頭尾各多留一行空白,還原就不是位元組相同了。
+# 連同區段邊界上那一行分隔用的空行一起吃掉，否則每次「安裝 → 解除安裝」
+# 都會在檔案頭尾各多留一行空白，還原就不是位元組相同了。
 strip_managed_blocks() {
   local file="$1"
   [ -f "$file" ] || return 0
@@ -233,11 +233,11 @@ strip_managed_blocks() {
 # v2 骨架
 # ---------------------------------------------------------------------------
 
-# v2 寫進 ~/.zshrc 的骨架,逐字。判斷「這份 .zshrc 是不是 v2 生出來的」用的基準。
+# v2 寫進 ~/.zshrc 的骨架，逐字。判斷「這份 .zshrc 是不是 v2 生出來的」用的基準。
 #
-# 這 40 行大部分抄自 oh-my-zsh 官方的 zshrc.zsh-template,所以個別行在任何
-# omz 使用者的 .zshrc 裡都可能逐字吻合——`ZSH_THEME=`、`plugins=(`、`)`、
-# `fpath+=`、`fi` 全都是。單看一行完全沒有鑑別力,只有「整組都在而且順序一致」
+# 這 40 行大部分抄自 oh-my-zsh 官方的 zshrc.zsh-template，所以個別行在任何
+# omz 使用者的 .zshrc 裡都可能逐字吻合：`ZSH_THEME=`、`plugins=(`、`)`、
+# `fpath+=`、`fi` 全都是。單看一行完全沒有鑑別力，只有「整組都在而且順序一致」
 # 才算數。理由寫在 docs/adr/0002。
 v2_skeleton() {
   cat <<'EOS'
@@ -274,7 +274,7 @@ source "$ZSH/oh-my-zsh.sh"
 EOS
 }
 
-# v2 寫進 ~/.zshenv 的整段,逐字。
+# v2 寫進 ~/.zshenv 的整段，逐字。
 v2_zshenv_skeleton() {
   cat <<'EOS'
 # Keep ~/.zshenv minimal because zsh reads this file for all zsh invocations,
@@ -289,9 +289,9 @@ unset zshenv_local_bin
 EOS
 }
 
-# 反證:只要使用者區段裡出現 oh-my-zsh 官方 template 的這些註解,
-# 就代表這份 .zshrc 是從官方 template 長出來的,不管跟 v2 吻合幾行都不回收。
-# v2 的骨架把官方 template 的說明註解全刪光了,所以這兩件事互斥。
+# 反證：只要使用者區段裡出現 oh-my-zsh 官方 template 的這些註解，
+# 就代表這份 .zshrc 是從官方 template 長出來的，不管跟 v2 吻合幾行都不回收。
+# v2 的骨架把官方 template 的說明註解全刪光了，所以這兩件事互斥。
 omz_template_markers() {
   cat <<'EOS'
 # Uncomment the following line to use case-sensitive completion.
@@ -308,8 +308,8 @@ DET_V2_TOTAL=0           # 基準總行數
 DET_V2_OMZ_TEMPLATE=0    # 1 = 命中官方 template 反證
 DET_V2_ZSHENV=0          # 1 = .zshenv 裡有 v2 的整段
 
-# 判斷 tpl 的每一行是不是都以相同順序出現在 src 裡(允許中間夾雜別的行)。
-# 印出對上的行數,全中就回傳 0。
+# 判斷 tpl 的每一行是不是都以相同順序出現在 src 裡（允許中間夾雜別的行）。
+# 印出對上的行數，全中就回傳 0。
 _subsequence_match() {
   local tpl="$1" src="$2"
   awk '
@@ -347,11 +347,11 @@ classify_v2_skeleton() {
   return 0
 }
 
-# 從一段內容裡把 v2 骨架那些行拿掉,其餘一行不動。
+# 從一段內容裡把 v2 骨架那些行拿掉，其餘一行不動。
 #
-# 用「貪婪比對到的那幾個位置」而不是「文字吻合的所有行」:樹莓派的
-# .zshrc 在 v2 骨架後面自己加了 `if [ -f ~/.bash_aliases ]; then … fi`,
-# 那個 fi 跟骨架裡的 fi 一字不差。按文字刪會刪掉它,留下孤兒 if。
+# 用「貪婪比對到的那幾個位置」而不是「文字吻合的所有行」：樹莓派的
+# .zshrc 在 v2 骨架後面自己加了 `if [ -f ~/.bash_aliases ]; then … fi`，
+# 那個 fi 跟骨架裡的 fi 一字不差。按文字刪會刪掉它，留下孤兒 if。
 strip_v2_skeleton() {
   awk '
     NR == FNR { if ($0 != "") pat[++n] = $0; next }
@@ -360,7 +360,7 @@ strip_v2_skeleton() {
       print
     }
   ' <(v2_skeleton) - | awk '
-    # 刪完會留下一串連續空行,收成一行;開頭與結尾的空行直接丟掉
+    # 刪完會留下一串連續空行，收成一行；開頭與結尾的空行直接丟掉
     /^[ \t]*$/ { blank = 1; next }
     { if (blank && printed) print ""; blank = 0; printed = 1; print }
   '
@@ -379,11 +379,11 @@ strip_v2_zshenv() {
   '
 }
 
-# ~/.zshrc 裡屬於使用者的那一部分——也就是本腳本重寫時必須原封保留的內容。
+# ~/.zshrc 裡屬於使用者的那一部分，也就是本腳本重寫時必須原封保留的內容。
 #
-# 加了 --clean-v2 而且判定為 v2 骨架時,這裡回傳的是「拿掉 v2 骨架之後」的版本。
-# 偵測與寫入都走這個函式,所以清掉骨架之後 .zshrc 不再 source oh-my-zsh,
-# 模式偵測就會自然翻回完整模式,由 tail 區段重新提供骨架。
+# 加了 --clean-v2 而且判定為 v2 骨架時，這裡回傳的是「拿掉 v2 骨架之後」的版本。
+# 偵測與寫入都走這個函式，所以清掉骨架之後 .zshrc 不再 source oh-my-zsh，
+# 模式偵測就會自然翻回完整模式，由 tail 區段重新提供骨架。
 user_region() {
   [ -f "$ZSHRC" ] || return 0
   if [ "$OPT_CLEAN_V2" -eq 1 ] && [ "$DET_V2_SKELETON" -eq 1 ]; then
@@ -421,24 +421,24 @@ file_has() {
   grep -qF "$pattern" "$file"
 }
 
-# 這次執行的還原點目錄。第一次真的要備份時才建立,所以「什麼都沒改」的執行
+# 這次執行的還原點目錄。第一次真的要備份時才建立，所以「什麼都沒改」的執行
 # 不會留下空目錄。
 RESTORE_POINT=""
 RESTORE_POINT_FILES=()
 
-# 確保這次執行的還原點目錄存在,路徑放在 $RESTORE_POINT。
+# 確保這次執行的還原點目錄存在，路徑放在 $RESTORE_POINT。
 #
-# 刻意不用 stdout 回傳路徑:呼叫端一寫成 dir="$(…)",函式就跑在 subshell 裡,
-# RESTORE_POINT 設了也帶不回來,下一個檔案又會開一個新目錄。
-# 同一次執行的 .zshrc 跟 .zshenv 就這樣被拆進 20260924-195124/ 與 .2/ 兩個還原點,
+# 刻意不用 stdout 回傳路徑：呼叫端一寫成 dir="$(…)"，函式就跑在 subshell 裡，
+# RESTORE_POINT 設了也帶不回來，下一個檔案又會開一個新目錄。
+# 同一次執行的 .zshrc 跟 .zshenv 就這樣被拆進 20260924-195124/ 與 .2/ 兩個還原點，
 # --rollback 選哪個都只還原得了一半。
 ensure_restore_point() {
   [ -n "$RESTORE_POINT" ] && return 0
   local stamp base n
   stamp="$(date +%Y%m%d-%H%M%S)"
   base="$BACKUP_ROOT/$stamp"
-  # 時間戳只到秒。裝完馬上 --rollback 會落在同一秒,直接用就會把「還原前」的
-  # 狀態寫進「安裝前」那個目錄,把使用者唯一的退路蓋掉。
+  # 時間戳只到秒。裝完馬上 --rollback 會落在同一秒，直接用就會把「還原前」的
+  # 狀態寫進「安裝前」那個目錄，把使用者唯一的退路蓋掉。
   RESTORE_POINT="$base"
   n=2
   while [ -e "$RESTORE_POINT" ]; do
@@ -446,8 +446,8 @@ ensure_restore_point() {
     n=$((n + 1))
   done
   mkdir -p "$RESTORE_POINT"
-  # 備份裡可能有 token、內網主機名、私人路徑。目錄本身就先關起來,
-  # 這樣就算個別檔案的 mode 比較鬆,別人也走不進來。
+  # 備份裡可能有 token、內網主機名、私人路徑。目錄本身就先關起來，
+  # 這樣就算個別檔案的 mode 比較鬆，別人也走不進來。
   chmod 700 "$BACKUP_ROOT" "$RESTORE_POINT" 2>/dev/null || true
 }
 
@@ -457,30 +457,30 @@ backup_file() {
   local dest
   ensure_restore_point
   dest="$RESTORE_POINT/$(basename "$file")"
-  # 同一次執行備份過就不再備份:第二次拿到的已經是被我們改過的版本。
+  # 同一次執行備份過就不再備份：第二次拿到的已經是被我們改過的版本。
   [ -e "$dest" ] && return 0
-  # -p 保留 mode 與時間戳。少了它,備份會用當下的 umask 建檔:
-  # 600 的 .zshrc 會備份成 644,等於把使用者的私人設定攤開給同機其他人看。
-  # 目標是 symlink 時 cp 會跟過去,備份到的是真正的內容。
+  # -p 保留 mode 與時間戳。少了它，備份會用當下的 umask 建檔：
+  # 600 的 .zshrc 會備份成 644，等於把使用者的私人設定攤開給同機其他人看。
+  # 目標是 symlink 時 cp 會跟過去，備份到的是真正的內容。
   cp -p "$file" "$dest"
   RESTORE_POINT_FILES+=("$(basename "$file")")
   info "已備份 $file → $dest"
 }
 
-# 取得檔案目前的權限;檔案不存在就回傳空字串。
+# 取得檔案目前的權限；檔案不存在就回傳空字串。
 file_mode() {
   [ -e "$1" ] || return 0
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || true
 }
 
-# 用新內容取代目標檔,但保住它原本的權限。
+# 用新內容取代目標檔，但保住它原本的權限。
 #
-# 直接 mv 一個 mktemp 出來的檔案上去會把權限一併換成 600——即使原本是 644。
-# 那個副作用小,但它是「腳本悄悄改了使用者檔案的屬性」,跟本腳本的立場相反。
+# 直接 mv 一個 mktemp 出來的檔案上去會把權限一併換成 600，即使原本是 644。
+# 那個副作用小，但它是「腳本悄悄改了使用者檔案的屬性」，跟本腳本的立場相反。
 #
-# 目標是 symlink 時(stow、chezmoi 這類 dotfile 工具的做法)不能 mv:那會把
-# symlink 換成一般檔案,使用者的 dotfile repo 從此收不到這次的改動,而且他不會發現。
-# 這時改成把內容寫穿過去,symlink 與真正檔案的權限都不動。
+# 目標是 symlink 時（stow、chezmoi 這類 dotfile 工具的做法）不能 mv：那會把
+# symlink 換成一般檔案，使用者的 dotfile repo 從此收不到這次的改動，而且他不會發現。
+# 這時改成把內容寫穿過去，symlink 與真正檔案的權限都不動。
 install_over() {
   local new="$1" target="$2" mode
   if [ -L "$target" ]; then
@@ -493,7 +493,7 @@ install_over() {
   if [ -n "$mode" ]; then
     chmod "$mode" "$target"
   else
-    # 新建的設定檔。600 而不是 644——這種檔案常常會被塞 token 進去。
+    # 新建的設定檔。600 而不是 644，因為這種檔案常常會被塞 token 進去。
     chmod 600 "$target"
   fi
 }
@@ -501,17 +501,17 @@ install_over() {
 # ---------------------------------------------------------------------------
 # 記住上一次的選擇
 #
-# 沒有這個的話,第一次用 --omz-update reminder 裝,下一次重跑忘了帶,
+# 沒有這個的話，第一次用 --omz-update reminder 裝，下一次重跑忘了帶，
 # 就會悄悄變回 prompt;--interactive-guard 也會悄悄被拿掉。
 # 「重跑是安全動作」不能要求使用者記得上次打過哪些旗標。
 # ---------------------------------------------------------------------------
 
-SAVED_OPTS_SOURCE=""     # state / block / 空字串:報告裡講清楚沿用的選擇是從哪來的
-SAVED_OPTS_APPLIED=()    # 實際沿用了哪些,給事前報告列出來
+SAVED_OPTS_SOURCE=""     # state / block / 空字串：報告裡講清楚沿用的選擇是從哪來的
+SAVED_OPTS_APPLIED=()    # 實際沿用了哪些，給事前報告列出來
 
 opt_given() { case "$OPTS_GIVEN" in *" $1 "*) return 0 ;; esac; return 1; }
 
-# 只抽出 head 區段的內容(不含標記)。
+# 只抽出 head 區段的內容（不含標記）。
 managed_head_block() {
   [ -f "$ZSHRC" ] || return 0
   awk -v b="$BLOCK_HEAD_BEGIN" -v e="$BLOCK_HEAD_END" '
@@ -542,7 +542,7 @@ _apply_saved() {
 
 load_saved_options() {
   if [ -f "$STATE_FILE" ]; then
-    # 不 source:這個檔案在使用者家目錄裡,只當成資料讀,而且只認得白名單裡的 key。
+    # 不 source：這個檔案在使用者家目錄裡，只當成資料讀，而且只認得白名單裡的 key。
     local line key val
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in ''|'#'*|*=*=*) continue ;; *=*) ;; *) continue ;; esac
@@ -553,7 +553,7 @@ load_saved_options() {
     return 0
   fi
 
-  # 3.1.x 裝的機器沒有狀態檔,改從上一次寫進去的 head 區段推回來。
+  # 3.1.x 裝的機器沒有狀態檔，改從上一次寫進去的 head 區段推回來。
   local head
   head="$(managed_head_block)"
   [ -n "$head" ] || return 0
@@ -564,7 +564,7 @@ load_saved_options() {
   return 0
 }
 
-# guard 只有在附加模式才是一個「選項」(完整模式本來就一定插),
+# guard 只有在附加模式才是一個「選項」（完整模式本來就一定插），
 # 所以要等 detect_zshrc_mode 跑完才知道該不該從 head 區段推回來。
 infer_guard_from_block() {
   [ "$SAVED_OPTS_SOURCE" = "block" ] || return 0
@@ -580,7 +580,7 @@ save_options() {
   new="$(mktemp)"
   {
     printf '# install-zsh-p10k 上一次安裝時的選擇。重跑時沒帶的選項會沿用這裡的值。\n'
-    printf '# 想改就在命令列明講一次(例如 --omz-update prompt、--chsh),或直接刪掉這個檔案。\n'
+    printf '# 想改就在命令列明講一次（例如 --omz-update prompt、--chsh），或直接刪掉這個檔案。\n'
     printf 'version=%s\n' "$SCRIPT_VERSION"
     printf 'omz_update=%s\n' "$OPT_OMZ_UPDATE"
     printf 'interactive_guard=%s\n' "$OPT_INTERACTIVE_GUARD"
@@ -673,7 +673,7 @@ detect_sudo() {
   DET_SUDO="password"
 }
 
-# 找系統 zsh,刻意排除 ~/.local —— 那是本腳本自編的產物,不算「系統本來就有」。
+# 找系統 zsh，刻意排除 ~/.local：那是本腳本自編的產物，不算「系統本來就有」。
 find_system_zsh() {
   local candidate
   for candidate in /usr/bin/zsh /bin/zsh /usr/local/bin/zsh; do
@@ -692,13 +692,13 @@ detect_zsh() {
     DET_ZSH_PATH="$sys"
     DET_ZSH_SOURCE="system"
   elif [ -n "$DET_PKG_INSTALL" ] && [ "$DET_SUDO" != "no" ]; then
-    DET_ZSH_PATH="(將由 $DET_PKG_MGR 安裝)"
+    DET_ZSH_PATH="（將由 $DET_PKG_MGR 安裝）"
     DET_ZSH_SOURCE="package"
   elif [ -x "$LOCAL_BIN/zsh" ]; then
     DET_ZSH_PATH="$LOCAL_BIN/zsh"
     DET_ZSH_SOURCE="local-build"
   else
-    DET_ZSH_PATH="(將在 $LOCAL_BIN 自行編譯)"
+    DET_ZSH_PATH="（將在 $LOCAL_BIN 自行編譯）"
     DET_ZSH_SOURCE="build"
   fi
 }
@@ -712,7 +712,7 @@ detect_missing_packages() {
     if [ "$cmd" = "zsh" ]; then
       case "$DET_ZSH_SOURCE" in system|local-build) continue ;; esac
     fi
-    # curl 缺但 wget 在,就不算缺
+    # curl 缺但 wget 在，就不算缺
     if [ "$cmd" = "curl" ] && has_command wget; then
       continue
     fi
@@ -744,20 +744,20 @@ detect_zshrc_mode() {
   return 0
 }
 
-# 這台機器「有沒有桌面」——不是「你現在看不看得到圖形」。
+# 這台機器「有沒有桌面」，不是「你現在看不看得到圖形」。
 #
-# 刻意不看 $DISPLAY 與 $WAYLAND_DISPLAY:sshd 開了 X11Forwarding(Ubuntu 出廠就開)
-# 的話,MobaXterm / VS Code Remote 連進來就會把 DISPLAY 設成 localhost:10.0,
+# 刻意不看 $DISPLAY 與 $WAYLAND_DISPLAY:sshd 開了 X11Forwarding（Ubuntu 出廠就開）
+# 的話，MobaXterm / VS Code Remote 連進來就會把 DISPLAY 設成 localhost:10.0，
 # 一台完全沒有桌面的伺服器就被判成「有圖形介面」。一台工作站就是這樣被誤判的。
 #
-# 改看兩個裝得掉、也砍得掉的事實:有沒有 session 檔、有沒有 display manager。
+# 改看兩個裝得掉、也砍得掉的事實：有沒有 session 檔、有沒有 display manager。
 detect_desktop() {
   DET_HAS_DESKTOP=0
   DET_DESKTOP_EVIDENCE=""
   local d sessions
   for d in /usr/share/xsessions /usr/share/wayland-sessions; do
     [ -d "$d" ] || continue
-    # 目錄空的不算——有些套件會留下空目錄
+    # 目錄空的不算，有些套件會留下空目錄
     sessions="$(find "$d" -maxdepth 1 -name '*.desktop' 2>/dev/null | head -3 | \
                 sed 's|.*/||; s|\.desktop$||' | tr '\n' ' ')"
     [ -n "$sessions" ] || continue
@@ -776,10 +776,10 @@ detect_desktop() {
   return 0
 }
 
-# 無護欄的 `exec … zsh`:會讓人登不進機器的那一類設定。
+# 無護欄的 `exec … zsh`：會讓人登不進機器的那一類設定。
 #
-# 判準是「這一行從第 0 欄就開始 exec」。寫在 if 裡面的 exec 一定有縮排
-# (本腳本自己裝的 hook 就是),所以縮排與否雖然是啟發式,分得很開。
+# 判斷方式是「這一行從第 0 欄就開始 exec」。寫在 if 裡面的 exec 一定有縮排
+# （本腳本自己裝的 hook 就是），所以縮排與否雖然是啟發式，分得很開。
 detect_exec_hazard() {
   DET_EXEC_HAZARD=()
   local f line
@@ -792,7 +792,7 @@ detect_exec_hazard() {
   return 0
 }
 
-# 白名單繼承:目錄存在 **且** bash 設定檔裡有提到,才寫進 .zshrc。
+# 白名單繼承：目錄存在 **且** bash 設定檔裡有提到，才寫進 .zshrc。
 bash_configs_mention() {
   local pattern="$1" f
   for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
@@ -848,7 +848,7 @@ detect_whitelist() {
   a=no; user_region_has 'npm-global' && a=yes
   _consider npm-global "$p" "$m" "$a"
 
-  # conda:偵測到就交給 conda init zsh 自己處理,不由我們拼片段
+  # conda：偵測到就交給 conda init zsh 自己處理，不由我們拼片段
   local d
   p=no
   for d in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" "$HOME/mambaforge"; do
@@ -866,16 +866,16 @@ detect_residue() {
   DET_RESIDUE=()
   # v2 在明明有系統 zsh 的機器上多編出來的 ~/.local/bin/zsh
   if [ -x "$LOCAL_BIN/zsh" ] && [ "$DET_ZSH_SOURCE" = "system" ]; then
-    DET_RESIDUE+=("$LOCAL_BIN/zsh (系統已有 $DET_ZSH_PATH,這份自編的是多餘的)")
+    DET_RESIDUE+=("$LOCAL_BIN/zsh （系統已有 $DET_ZSH_PATH，這份自編的是多餘的）")
   fi
   # v2 的舊 hook
   if file_has "$HOME/.bash_profile" "BEGIN USER LOCAL ZSH AUTO START"; then
     DET_RESIDUE+=("~/.bash_profile 裡有 v2 的舊 auto-start hook")
   fi
-  # 舊格式的散裝備份。刻意不清:那是使用者手上唯一的還原素材。
+  # 舊格式的散裝備份。刻意不清：那是使用者手上唯一的還原素材。
   local n
   n="$(find "$HOME" -maxdepth 1 -name '.zshrc.backup.*' -o -maxdepth 1 -name '.zshenv.backup.*' 2>/dev/null | wc -l)"
-  [ "$n" -gt 0 ] && DET_RESIDUE+=("$n 份散在家目錄的舊格式備份(新的備份改放 $BACKUP_ROOT)")
+  [ "$n" -gt 0 ] && DET_RESIDUE+=("$n 份散在家目錄的舊格式備份（新的備份改放 $BACKUP_ROOT）")
   return 0
 }
 
@@ -891,9 +891,10 @@ detect_shell_change() {
 
   # 預測 chsh 到底走不走得通。
   #
-  # 事前報告的全部價值就是「動手前把要做的事講清楚」,所以它不能寫「將把 login shell
-  # 改成 zsh」然後實際上失敗、改裝 hook —— 那比不講還糟。共用主機上就發生過:
-  # sudo 要密碼、又是 ssh host command 沒有 tty,兩條路都走不通。
+  # 事前報告的全部價值就是「動手前把要做的事講清楚」，所以它不能寫「將把 login shell
+  # 改成 zsh」然後實際上失敗、改裝 hook，那比不講還糟。共用主機上就發生過：
+  # sudo 要密碼、又是 ssh host command 沒有 tty，兩條路都走不通。
+  # 值的格式是「方法:原因」。這裡的冒號是給下面 ${…%%:*} 切開用的，必須是半形。
   DET_CHSH_METHOD=""
   if [ "$DET_NEED_CHSH" -eq 1 ]; then
     if ! has_command chsh; then
@@ -905,7 +906,7 @@ detect_shell_change() {
     elif [ "$DET_SUDO" = "passwordless" ]; then
       DET_CHSH_METHOD="sudo:免密碼 sudo"
     else
-      DET_CHSH_METHOD="hook:沒有 tty 可以輸入密碼,sudo 也要密碼"
+      DET_CHSH_METHOD="hook:沒有 tty 可以輸入密碼，sudo 也要密碼"
     fi
   fi
   return 0
@@ -917,8 +918,8 @@ run_detection() {
   detect_sudo
   detect_zsh
   detect_missing_packages
-  # 一定要在 detect_zshrc_mode 之前:user_region() 會依這個結果決定要不要
-  # 把 v2 骨架濾掉,而模式偵測看的就是 user_region() 的輸出。
+  # 一定要在 detect_zshrc_mode 之前：user_region() 會依這個結果決定要不要
+  # 把 v2 骨架濾掉，而模式偵測看的就是 user_region() 的輸出。
   classify_v2_skeleton
   detect_zshrc_mode
   detect_desktop
@@ -933,19 +934,19 @@ run_detection() {
 # ---------------------------------------------------------------------------
 
 check_supported() {
-  # 已經有 zsh 的機器一律支援,不管是什麼發行版。
+  # 已經有 zsh 的機器一律支援，不管是什麼發行版。
   [ "$DET_ZSH_SOURCE" = "system" ] && return 0
   [ "$DET_ZSH_SOURCE" = "local-build" ] && return 0
 
-  # 沒有 zsh,但認得套件管理器 → 支援
+  # 沒有 zsh，但認得套件管理器 → 支援
   [ "$DET_PKG_MGR" != "none" ] && return 0
 
-  # 沒有 zsh 也沒有認得的套件管理器 → 明確報錯退出,不做部分安裝
-  err "不支援這台機器:$DET_OS_PRETTY"
-  err "偵測不到 zsh,也認不得套件管理器(apt-get / dnf / pacman / zypper)。"
+  # 沒有 zsh 也沒有認得的套件管理器 → 明確報錯退出，不做部分安裝
+  err "不支援這台機器：$DET_OS_PRETTY"
+  err "偵測不到 zsh，也認不得套件管理器（apt-get / dnf / pacman / zypper）。"
   err ""
-  err "本腳本刻意不對這類環境做部分安裝 —— 裝一半比不裝更難收拾。"
-  err "如果你確定要在這裡用 zsh,請先自行安裝 zsh,再重跑一次本腳本。"
+  err "本腳本刻意不對這類環境做部分安裝，因為裝一半比不裝更難收拾。"
+  err "如果你確定要在這裡用 zsh，請先自行安裝 zsh，再重跑一次本腳本。"
   exit 1
 }
 
@@ -958,9 +959,9 @@ _join() { local IFS=", "; printf '%s' "$*"; }
 print_report() {
   local mode_desc
   if [ "$DET_ZSHRC_MODE" = "append" ]; then
-    mode_desc="附加模式(你的 ~/.zshrc 已經自己載入 oh-my-zsh,骨架完全不動)"
+    mode_desc="附加模式（你的 ~/.zshrc 已經自己載入 oh-my-zsh，骨架完全不動）"
   else
-    mode_desc="完整模式(將寫入 oh-my-zsh 骨架)"
+    mode_desc="完整模式（將寫入 oh-my-zsh 骨架）"
   fi
 
   printf '\n'
@@ -974,43 +975,43 @@ print_report() {
   printf '  zsh             %s  [%s]\n' "$DET_ZSH_PATH" "$DET_ZSH_SOURCE"
   printf '  login shell     %s\n' "$DET_LOGIN_SHELL"
   if [ "$DET_HAS_DESKTOP" -eq 1 ]; then
-    printf '  桌面環境        這台有(%s)\n' "$DET_DESKTOP_EVIDENCE"
+    printf '  桌面環境        這台有（%s）\n' "$DET_DESKTOP_EVIDENCE"
     if [ "$DET_VIA_SSH" -eq 1 ]; then
-      printf '                  %s你現在是從遠端連進來的,所以裝在這台的字型你看不到;%s\n' "$C_DIM" "$C_RESET"
-      printf '                  %s要看到圖示,你手邊的終端機也要裝一份。%s\n' "$C_DIM" "$C_RESET"
+      printf '                  %s你現在是從遠端連進來的，所以裝在這台的字型你看不到；%s\n' "$C_DIM" "$C_RESET"
+      printf '                  %s要看到圖示，你手邊的終端機也要裝一份。%s\n' "$C_DIM" "$C_RESET"
     fi
   else
-    printf '  桌面環境        沒有(不看 $DISPLAY —— X11 forwarding 會讓它騙人)\n'
+    printf '  桌面環境        沒有（不看 $DISPLAY，因為 X11 forwarding 會讓它騙人）\n'
   fi
   printf '  .zshrc 模式     %s\n' "$mode_desc"
   if [ "${#SAVED_OPTS_APPLIED[@]}" -gt 0 ]; then
     local from="$STATE_FILE"
     [ "$SAVED_OPTS_SOURCE" = "block" ] && from="上一次寫進 ~/.zshrc 的 head 區段"
     printf '  沿用上次的選項  %s\n' "$(_join "${SAVED_OPTS_APPLIED[@]}")"
-    printf '                  %s來自 %s;要改請在命令列明講%s\n' "$C_DIM" "$from" "$C_RESET"
+    printf '                  %s來自 %s；要改請在命令列明講%s\n' "$C_DIM" "$from" "$C_RESET"
   fi
   printf '\n'
 
   printf '%s要修改的檔案%s\n' "$C_BOLD" "$C_RESET"
-  printf '  ~/.zshrc                寫入 head 與 tail 兩個區段;區段外的內容不動\n'
-  printf '  ~/.zshenv               寫入 env 區段:非互動 zsh 的 PATH\n'
-  printf '                          (ssh host command / scp / agent 只讀得到這個檔案)\n'
+  printf '  ~/.zshrc                寫入 head 與 tail 兩個區段；區段外的內容不動\n'
+  printf '  ~/.zshenv               寫入 env 區段：非互動 zsh 的 PATH\n'
+  printf '                          （ssh host command / scp / agent 只讀得到這個檔案）\n'
   if [ ! -f "$ZSHRC_LOCAL" ]; then
-    printf '  ~/.zshrc.local          從 .bashrc 抽出的 export/alias(全部註解掉)\n'
+    printf '  ~/.zshrc.local          從 .bashrc 抽出的 export/alias（全部註解掉）\n'
   elif [ "$OPT_REFRESH_LOCAL" -eq 1 ]; then
-    printf '  ~/.zshrc.local.new      已存在 ~/.zshrc.local,不覆蓋,另存新檔供你 diff\n'
+    printf '  ~/.zshrc.local.new      已存在 ~/.zshrc.local，不覆蓋，另存新檔供你 diff\n'
   else
-    printf '  ~/.zshrc.local          已存在,完全不動\n'
+    printf '  ~/.zshrc.local          已存在，完全不動\n'
   fi
   if [ "$DET_NEED_CHSH" -eq 1 ]; then
     case "${DET_CHSH_METHOD%%:*}" in
       hook)
-        printf '  ~/.bash_profile         %schsh 走不通(%s),\n' "$C_YEL" "${DET_CHSH_METHOD#*:}"
+        printf '  ~/.bash_profile         %schsh 走不通（%s），\n' "$C_YEL" "${DET_CHSH_METHOD#*:}"
         printf '                          改裝一個只在互動式 login shell 生效的 auto-start hook。%s\n' "$C_RESET"
-        printf '                          login shell 仍然是 %s。要真的改請自己跑:chsh -s %s\n' \
+        printf '                          login shell 仍然是 %s。要真的改請自己跑：chsh -s %s\n' \
           "$DET_LOGIN_SHELL" "$DET_ZSH_PATH"
         [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.profile" ] && \
-          printf '                          %s(這台還沒有 .bash_profile,新建的那份會先 source 你的 .profile)%s\n' \
+          printf '                          %s（這台還沒有 .bash_profile，新建的那份會先 source 你的 .profile）%s\n' \
             "$C_DIM" "$C_RESET"
         ;;
       *)
@@ -1027,36 +1028,36 @@ print_report() {
     printf '    → sudo %s %s\n' "$DET_PKG_INSTALL" "$(_join "${DET_MISSING_PKGS[@]}")"
     printf '    → 不會執行 upgrade / dist-upgrade\n'
   else
-    printf '  系統套件                無(需要的都在,完全不碰套件管理器)\n'
+    printf '  系統套件                無（需要的都在，完全不碰套件管理器）\n'
   fi
-  printf '  oh-my-zsh               %s\n' "$([ -d "$OH_MY_ZSH_DIR" ] && echo '已有,不動' || echo '將安裝')"
-  printf '  Powerlevel10k           %s\n' "$([ -d "$ZSH_CUSTOM_DIR/themes/powerlevel10k" ] && echo '已有,不動' || echo '將安裝')"
+  printf '  oh-my-zsh               %s\n' "$([ -d "$OH_MY_ZSH_DIR" ] && echo '已有，不動' || echo '將安裝')"
+  printf '  Powerlevel10k           %s\n' "$([ -d "$ZSH_CUSTOM_DIR/themes/powerlevel10k" ] && echo '已有，不動' || echo '將安裝')"
   printf '  plugins                 zsh-autosuggestions / fast-syntax-highlighting / zsh-completions\n'
-  printf '  ~/.p10k.zsh             %s\n' "$([ -f "$HOME/.p10k.zsh" ] && echo '已有,不覆蓋' || echo '將寫入內建 template')"
+  printf '  ~/.p10k.zsh             %s\n' "$([ -f "$HOME/.p10k.zsh" ] && echo '已有，不覆蓋' || echo '將寫入內建 template')"
   if [ "$OPT_NO_FONTS" -eq 1 ]; then
-    printf '  MesloLGS NF 字型        跳過(--no-fonts)\n'
+    printf '  MesloLGS NF 字型        跳過（--no-fonts）\n'
   elif [ "$DET_HAS_DESKTOP" -eq 1 ]; then
-    printf '  MesloLGS NF 字型        將安裝到 ~/.local/share/fonts(這台有桌面)\n'
+    printf '  MesloLGS NF 字型        將安裝到 ~/.local/share/fonts（這台有桌面）\n'
   else
-    printf '  MesloLGS NF 字型        跳過(這台沒有桌面,裝了也畫不出來)\n'
+    printf '  MesloLGS NF 字型        跳過（這台沒有桌面，裝了也畫不出來）\n'
   fi
-  [ "$OPT_UPDATE" -eq 1 ] && printf '  %s已安裝的元件            會 git pull 更新(--update)%s\n' "$C_YEL" "$C_RESET"
+  [ "$OPT_UPDATE" -eq 1 ] && printf '  %s已安裝的元件            會 git pull 更新（--update）%s\n' "$C_YEL" "$C_RESET"
   printf '\n'
 
   printf '%s從 bash 繼承%s\n' "$C_BOLD" "$C_RESET"
   if [ "${#DET_WHITELIST[@]}" -gt 0 ]; then
-    printf '  白名單(寫入 zsh 官方寫法)  %s\n' "$(_join "${DET_WHITELIST[@]}")"
+    printf '  白名單（寫入 zsh 官方寫法）  %s\n' "$(_join "${DET_WHITELIST[@]}")"
   else
     printf '  白名單                  無\n'
   fi
   if [ "${#DET_WHITELIST_SKIP[@]}" -gt 0 ]; then
-    printf '  已在 .zshrc 裡,跳過     %s\n' "$(_join "${DET_WHITELIST_SKIP[@]}")"
+    printf '  已在 .zshrc 裡，跳過     %s\n' "$(_join "${DET_WHITELIST_SKIP[@]}")"
   fi
-  printf '  .bash_aliases           %s\n' "$([ -f "$HOME/.bash_aliases" ] && echo '存在,會在 .zshrc 裡 source' || echo '不存在')"
+  printf '  .bash_aliases           %s\n' "$([ -f "$HOME/.bash_aliases" ] && echo '存在，會在 .zshrc 裡 source' || echo '不存在')"
   printf '\n'
 
-  # 讓步:使用者區段裡已經有等價設定,所以我們不寫。
-  # 這是這一版修掉「同一行被插兩次」的機制,列出來才看得出它有沒有在運作。
+  # 讓步：使用者區段裡已經有等價設定，所以我們不寫。
+  # 這是這一版修掉「同一行被插兩次」的機制，列出來才看得出它有沒有在運作。
   local deferred=()
   [ "$DET_HAS_INSTANT_PROMPT" -eq 1 ] && deferred+=("p10k instant prompt")
   [ "$DET_HAS_P10K_SOURCE" -eq 1 ]    && deferred+=("source ~/.p10k.zsh")
@@ -1067,46 +1068,46 @@ print_report() {
   [ "$DET_HAS_BASH_ALIASES" -eq 1 ]   && deferred+=("source ~/.bash_aliases")
   [ "$DET_HAS_ZSHRC_LOCAL_SOURCE" -eq 1 ] && deferred+=("source ~/.zshrc.local")
   [ "$DET_ENV_HAS_TYPESET_U" -eq 1 ]  && deferred+=("typeset -U path PATH(.zshenv)")
-  [ "$DET_ENV_HAS_PATH_LINE" -eq 1 ]  && deferred+=("PATH 那一行(.zshenv)")
+  [ "$DET_ENV_HAS_PATH_LINE" -eq 1 ]  && deferred+=("PATH 那一行（.zshenv）")
 
   if [ "${#deferred[@]}" -gt 0 ]; then
-    printf '%s你的設定檔裡已經有,所以我們不寫第二份%s\n' "$C_BOLD" "$C_RESET"
+    printf '%s你的設定檔裡已經有，所以我們不寫第二份%s\n' "$C_BOLD" "$C_RESET"
     local x
     for x in "${deferred[@]}"; do printf '  · %s\n' "$x"; done
-    printf '  %s值也照你的,不覆蓋。%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s值也照你的，不覆蓋。%s\n' "$C_DIM" "$C_RESET"
     printf '\n'
   fi
 
-  # v2 骨架的分類結果。判錯的時候,這幾行是唯一看得出來的地方。
+  # v2 骨架的分類結果。判錯的時候，這幾行是唯一看得出來的地方。
   if [ "$DET_V2_SKELETON" -eq 1 ]; then
     printf '%s偵測到 v2 的 .zshrc 骨架%s\n' "$C_YEL" "$C_RESET"
-    printf '  v2 那 %s 行骨架完整出現在你的 .zshrc 裡,而且順序一致。\n' "$DET_V2_TOTAL"
+    printf '  v2 那 %s 行骨架完整出現在你的 .zshrc 裡，而且順序一致。\n' "$DET_V2_TOTAL"
     if [ "$OPT_CLEAN_V2" -eq 1 ]; then
-      printf '  %s--clean-v2:會把這 %s 行收回 managed block,你自己加的行一行不動。%s\n' \
+      printf '  %s--clean-v2：會把這 %s 行收回 managed block，你自己加的行一行不動。%s\n' \
         "$C_YEL" "$DET_V2_TOTAL" "$C_RESET"
     else
-      printf '  預設不動它——那些行現在位於使用者區段。要收回來請加 --clean-v2。\n'
+      printf '  預設不動它，因為那些行現在位於使用者區段。要收回來請加 --clean-v2。\n'
     fi
     printf '\n'
   elif [ "$DET_V2_OMZ_TEMPLATE" -eq 1 ]; then
     printf '%s.zshrc 的來歷%s\n' "$C_DIM" "$C_RESET"
-    printf '  %s有 %s/%s 行與 v2 的骨架相同,但同時出現 oh-my-zsh 官方 template 的註解,%s\n' \
+    printf '  %s有 %s/%s 行與 v2 的骨架相同，但同時出現 oh-my-zsh 官方 template 的註解，%s\n' \
       "$C_DIM" "$DET_V2_MATCHED" "$DET_V2_TOTAL" "$C_RESET"
-    printf '  %s判定為官方 template 衍生而非 v2 產物,不回收。%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s判定為官方 template 衍生而非 v2 產物，不回收。%s\n' "$C_DIM" "$C_RESET"
     printf '\n'
   elif [ "$DET_V2_MATCHED" -gt 0 ] && [ "$DET_ZSHRC_MODE" = "append" ]; then
     printf '%s.zshrc 的來歷%s\n' "$C_DIM" "$C_RESET"
-    printf '  %s有 %s/%s 行與 v2 的骨架相同,不足以判定是 v2 產物,不回收。%s\n' \
+    printf '  %s有 %s/%s 行與 v2 的骨架相同，不足以判定是 v2 產物，不回收。%s\n' \
       "$C_DIM" "$DET_V2_MATCHED" "$DET_V2_TOTAL" "$C_RESET"
     printf '  %s(ZSH_THEME= 、plugins=( 這些行本來就抄自 oh-my-zsh 官方 template,%s\n' "$C_DIM" "$C_RESET"
-    printf '  %s 在任何 omz 使用者的 .zshrc 裡都會吻合,單看行數沒有鑑別力。)%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s 在任何 omz 使用者的 .zshrc 裡都會吻合，單看行數沒有鑑別力。）%s\n' "$C_DIM" "$C_RESET"
     printf '\n'
   fi
 
   if [ "$DET_V2_ZSHENV" -eq 1 ]; then
     printf '%s~/.zshenv 裡有 v2 寫的整段%s\n' "$C_YEL" "$C_RESET"
     if [ "$OPT_CLEAN_V2" -eq 1 ]; then
-      printf '  %s--clean-v2:會拿掉。%s\n' "$C_YEL" "$C_RESET"
+      printf '  %s--clean-v2：會拿掉。%s\n' "$C_YEL" "$C_RESET"
     else
       printf '  預設不動。要拿掉請加 --clean-v2。\n'
     fi
@@ -1114,7 +1115,7 @@ print_report() {
   fi
 
   if [ "${#DET_RESIDUE[@]}" -gt 0 ]; then
-    printf '%s偵測到舊版殘骸(只提醒,不代為刪除)%s\n' "$C_YEL" "$C_RESET"
+    printf '%s偵測到舊版殘骸（只提醒，不代為刪除）%s\n' "$C_YEL" "$C_RESET"
     local r
     for r in "${DET_RESIDUE[@]}"; do printf '  · %s\n' "$r"; done
     printf '\n'
@@ -1122,18 +1123,18 @@ print_report() {
 
   if [ "$DET_ZSHRC_MODE" = "append" ] && [ "$OPT_INTERACTIVE_GUARD" -eq 0 ] && [ "$DET_HAS_GUARD" -eq 0 ]; then
     printf '%s附加模式的但書%s\n' "$C_DIM" "$C_RESET"
-    printf '  %s不會在你的 .zshrc 插入「非互動 shell 提前 return」,以免改變這台機器現有的行為。%s\n' "$C_DIM" "$C_RESET"
-    printf '  %s想要那個(對 agent / scp / CI 比較乾淨),請加 --interactive-guard。%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s不會在你的 .zshrc 插入「非互動 shell 提前 return」，以免改變這台機器現有的行為。%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s想要那個（對 agent / scp / CI 比較乾淨），請加 --interactive-guard。%s\n' "$C_DIM" "$C_RESET"
     printf '\n'
   fi
 
-  # 這台已經裝過,而且 3.1.0 改了某些預設值——只有在會真的改到既有行為時才印。
+  # 這台已經裝過，而且 3.1.0 改了某些預設值。只有在會真的改到既有行為時才印。
   if file_has "$ZSHRC" "$BLOCK_HEAD_BEGIN"; then
     local changes=()
     if [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] && \
        grep -q "zstyle ':omz:update' mode disabled" "$ZSHRC" 2>/dev/null && \
        [ "$OPT_OMZ_UPDATE" != "disabled" ]; then
-      changes+=("oh-my-zsh 的更新提示:disabled → $OPT_OMZ_UPDATE(要維持原樣請加 --omz-update disabled)")
+      changes+=("oh-my-zsh 的更新提示：disabled → $OPT_OMZ_UPDATE（要維持原樣請加 --omz-update disabled）")
     fi
     if grep -q '^typeset -U path PATH$' "$ZSHRC" 2>/dev/null; then
       changes+=("head 區段不再重複 .zshenv 已有的 typeset -U 與 PATH 那一行")
@@ -1147,20 +1148,20 @@ print_report() {
   fi
 
   printf '%s還原點%s\n' "$C_BOLD" "$C_RESET"
-  printf '  真的改到檔案時,改動前的版本會存進 %s/<時間戳>/\n' "$BACKUP_ROOT"
-  printf '  沒改到就不會產生——要回去用:bash %s --rollback\n' \
+  printf '  真的改到檔案時，改動前的版本會存進 %s/<時間戳>/\n' "$BACKUP_ROOT"
+  printf '  沒改到就不會產生。要回去用：bash %s --rollback\n' \
     "$(basename "${BASH_SOURCE[0]:-install-zsh-p10k.sh}")"
   printf '\n'
 
-  # 會讓人登不進機器的那一類設定,放在最後、緊貼確認提示,確保被看到。
+  # 會讓人登不進機器的那一類設定，放在最後、緊貼確認提示，確保被看到。
   if [ "${#DET_EXEC_HAZARD[@]}" -gt 0 ]; then
-    printf '%s⚠ 警告:有無護欄的 exec … zsh%s\n' "$C_RED" "$C_RESET"
+    printf '%s⚠ 警告：有無護欄的 exec … zsh%s\n' "$C_RED" "$C_RESET"
     local h
     for h in "${DET_EXEC_HAZARD[@]}"; do printf '  %s\n' "$h"; done
     printf '\n'
-    printf '  這種寫法沒有互動性判斷、沒有 tty 檢查、也沒有逃生開關,而且 .profile 連 sh 都會讀。\n'
-    printf '  它會蓋掉本腳本設定的 login shell,你看到的環境跟報告講的會對不起來。\n'
-    printf '  本腳本不動它——那不是舊版寫的,是手寫的。要拿掉請自己來:\n'
+    printf '  這種寫法沒有互動性判斷、沒有 tty 檢查、也沒有逃生開關，而且 .profile 連 sh 都會讀。\n'
+    printf '  它會蓋掉本腳本設定的 login shell，你看到的環境跟報告講的會對不起來。\n'
+    printf '  本腳本不動它：那不是舊版寫的，是手寫的。要拿掉請自己來：\n'
     printf "    %ssed -i 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
     printf '\n'
   fi
@@ -1171,10 +1172,10 @@ print_report() {
 confirm_or_exit() {
   [ "$OPT_YES" -eq 1 ] && return 0
   if [ ! -t 0 ]; then
-    info "非互動執行(沒有 tty),直接繼續。"
+    info "非互動執行（沒有 tty），直接繼續。"
     return 0
   fi
-  printf '\n按 Enter 繼續,Ctrl-C 中止 … '
+  printf '\n按 Enter 繼續，Ctrl-C 中止 … '
   read -r _ || true
   printf '\n'
 }
@@ -1183,9 +1184,9 @@ confirm_or_exit() {
 # 下載
 # ---------------------------------------------------------------------------
 
-# 先下載到旁邊的 .part,成功才改名。
-# 直接寫到 $out 的話,斷線會留下半個檔案,download_if_missing 之後看到檔案在
-# 就不再下載,字型從此壞著,重跑也修不好。
+# 先下載到旁邊的 .part，成功才改名。
+# 直接寫到 $out 的話，斷線會留下半個檔案，download_if_missing 之後看到檔案在
+# 就不再下載，字型從此壞著，重跑也修不好。
 download_to() {
   local out="$1" url="$2" part="$1.part"
   if has_command curl; then
@@ -1193,7 +1194,7 @@ download_to() {
   elif has_command wget; then
     wget -q -O "$part" "$url" || { rm -f "$part"; return 1; }
   else
-    die "curl 與 wget 都沒有,無法下載:$url"
+    die "curl 與 wget 都沒有，無法下載：$url"
   fi
   mv "$part" "$out"
 }
@@ -1219,19 +1220,19 @@ sudo_run() {
 }
 
 install_missing_packages() {
-  [ "${#DET_MISSING_PKGS[@]}" -eq 0 ] && { info "需要的系統套件都在,不碰套件管理器。"; return 0; }
-  [ "$DET_SUDO" = "no" ] && { warn "缺少 ${DET_MISSING_PKGS[*]} 但沒有 sudo,略過套件安裝。"; return 0; }
-  [ "$DET_PKG_MGR" = "none" ] && { warn "認不得套件管理器,略過套件安裝。"; return 0; }
+  [ "${#DET_MISSING_PKGS[@]}" -eq 0 ] && { info "需要的系統套件都在，不碰套件管理器。"; return 0; }
+  [ "$DET_SUDO" = "no" ] && { warn "缺少 ${DET_MISSING_PKGS[*]} 但沒有 sudo，略過套件安裝。"; return 0; }
+  [ "$DET_PKG_MGR" = "none" ] && { warn "認不得套件管理器，略過套件安裝。"; return 0; }
 
-  info "安裝缺少的套件:${DET_MISSING_PKGS[*]}"
-  # 刻意不主動跑 update:只有在 install 失敗時才更新索引重試一次。
+  info "安裝缺少的套件：${DET_MISSING_PKGS[*]}"
+  # 刻意不主動跑 update：只有在 install 失敗時才更新索引重試一次。
   # shellcheck disable=SC2086
   if sudo_run $DET_PKG_INSTALL "${DET_MISSING_PKGS[@]}"; then
     ok "套件安裝完成。"
     return 0
   fi
 
-  warn "第一次安裝失敗,更新套件索引後重試一次。"
+  warn "第一次安裝失敗，更新套件索引後重試一次。"
   case "$DET_PKG_MGR" in
     apt-get) sudo_run apt-get update ;;
     dnf)     sudo_run dnf makecache ;;
@@ -1240,16 +1241,16 @@ install_missing_packages() {
   esac
   # shellcheck disable=SC2086
   sudo_run $DET_PKG_INSTALL "${DET_MISSING_PKGS[@]}" \
-    || die "套件安裝失敗:${DET_MISSING_PKGS[*]}"
+    || die "套件安裝失敗：${DET_MISSING_PKGS[*]}"
   ok "套件安裝完成。"
 }
 
 build_zsh_locally() {
-  info "沒有系統 zsh 也裝不了,改為自行編譯到 $LOCAL_PREFIX。"
+  info "沒有系統 zsh 也裝不了，改為自行編譯到 $LOCAL_PREFIX。"
 
   local tool missing=()
   for tool in gcc make tar; do has_command "$tool" || missing+=("$tool"); done
-  [ "${#missing[@]}" -gt 0 ] && die "自行編譯需要 ${missing[*]},請先安裝。"
+  [ "${#missing[@]}" -gt 0 ] && die "自行編譯需要 ${missing[*]}，請先安裝。"
 
   mkdir -p "$LOCAL_SRC" "$LOCAL_BIN"
 
@@ -1286,19 +1287,19 @@ build_zsh_locally() {
   fi
 
   DET_ZSH_PATH="$LOCAL_BIN/zsh"
-  ok "zsh 已編譯完成:$($LOCAL_BIN/zsh --version)"
+  ok "zsh 已編譯完成：$($LOCAL_BIN/zsh --version)"
 }
 
 ensure_zsh() {
   case "$DET_ZSH_SOURCE" in
     system|local-build)
-      info "使用既有的 zsh:$DET_ZSH_PATH" ;;
+      info "使用既有的 zsh：$DET_ZSH_PATH" ;;
     package)
       install_missing_packages
       local sys
       if sys="$(find_system_zsh)"; then
         DET_ZSH_PATH="$sys"
-        ok "zsh 已安裝:$DET_ZSH_PATH"
+        ok "zsh 已安裝：$DET_ZSH_PATH"
       else
         build_zsh_locally
       fi ;;
@@ -1318,14 +1319,14 @@ clone_or_update() {
   if [ -d "$dir/.git" ]; then
     if [ "$OPT_UPDATE" -eq 1 ]; then
       info "更新 $name"
-      git -C "$dir" pull --ff-only >/dev/null 2>&1 || warn "$name 更新失敗,保持原狀。"
+      git -C "$dir" pull --ff-only >/dev/null 2>&1 || warn "$name 更新失敗，保持原狀。"
     else
-      info "$name 已存在,不動(要更新請加 --update)。"
+      info "$name 已存在，不動（要更新請加 --update）。"
     fi
     return 0
   fi
   if [ -d "$dir" ]; then
-    warn "$dir 存在但不是 git repo,跳過。"
+    warn "$dir 存在但不是 git repo，跳過。"
     return 0
   fi
   info "安裝 $name"
@@ -1336,14 +1337,14 @@ install_oh_my_zsh() {
   if [ -d "$OH_MY_ZSH_DIR" ]; then
     if [ "$OPT_UPDATE" -eq 1 ] && [ -d "$OH_MY_ZSH_DIR/.git" ]; then
       info "更新 oh-my-zsh"
-      git -C "$OH_MY_ZSH_DIR" pull --ff-only >/dev/null 2>&1 || warn "oh-my-zsh 更新失敗,保持原狀。"
+      git -C "$OH_MY_ZSH_DIR" pull --ff-only >/dev/null 2>&1 || warn "oh-my-zsh 更新失敗，保持原狀。"
     else
-      info "oh-my-zsh 已存在,不動。"
+      info "oh-my-zsh 已存在，不動。"
     fi
     return 0
   fi
   info "安裝 oh-my-zsh"
-  # 直接 git clone,不跑 oh-my-zsh 官方的 install.sh:那支預設會覆蓋 .zshrc,
+  # 直接 git clone，不跑 oh-my-zsh 官方的 install.sh：那支預設會覆蓋 .zshrc，
   # 正是 v2 的錯誤。
   git clone --depth=1 --quiet https://github.com/ohmyzsh/ohmyzsh.git "$OH_MY_ZSH_DIR"
 }
@@ -1362,13 +1363,13 @@ install_theme_and_plugins() {
 
 install_p10k_template() {
   if [ -f "$HOME/.p10k.zsh" ]; then
-    info "~/.p10k.zsh 已存在,不覆蓋。"
+    info "~/.p10k.zsh 已存在，不覆蓋。"
     return 0
   fi
   info "寫入內建的 ~/.p10k.zsh template"
   if ! printf '%s' "$P10K_TEMPLATE_B64" | base64 -d 2>/dev/null | gzip -dc > "$HOME/.p10k.zsh" 2>/dev/null; then
     rm -f "$HOME/.p10k.zsh"
-    warn "內建 template 解壓失敗。安裝完成後請自己跑一次:p10k configure"
+    warn "內建 template 解壓失敗。安裝完成後請自己跑一次：p10k configure"
     return 0
   fi
   ok "已寫入 ~/.p10k.zsh($(wc -c < "$HOME/.p10k.zsh") bytes)"
@@ -1377,7 +1378,7 @@ install_p10k_template() {
 install_fonts() {
   [ "$OPT_NO_FONTS" -eq 1 ] && return 0
   if [ "$DET_HAS_DESKTOP" -eq 0 ]; then
-    info "這台沒有桌面環境,跳過字型安裝(字型要裝在你手邊的終端機那一端)。"
+    info "這台沒有桌面環境，跳過字型安裝（字型要裝在你手邊的終端機那一端）。"
     return 0
   fi
   info "安裝 MesloLGS NF 字型"
@@ -1387,7 +1388,7 @@ install_fonts() {
   for style in "Regular" "Bold" "Italic" "Bold%20Italic"; do
     local name="${style//%20/ }"
     download_if_missing "$LOCAL_FONTS/MesloLGS NF ${name}.ttf" \
-      "$base/MesloLGS%20NF%20${style}.ttf" || warn "字型下載失敗:$name"
+      "$base/MesloLGS%20NF%20${style}.ttf" || warn "字型下載失敗：$name"
   done
   has_command fc-cache && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true
 }
@@ -1434,9 +1435,9 @@ run_conda_init() {
     [ "$t" = "conda" ] || continue
     local conda_sh="${CONDA_HOME:-}/etc/profile.d/conda.sh"
     [ -f "$conda_sh" ] || return 0
-    info "呼叫 conda init zsh(讓 conda 自己維護它的區段)"
+    info "呼叫 conda init zsh（讓 conda 自己維護它的區段）"
     # shellcheck disable=SC1090
-    ( . "$conda_sh" && conda init zsh >/dev/null 2>&1 ) || warn "conda init zsh 失敗,略過。"
+    ( . "$conda_sh" && conda init zsh >/dev/null 2>&1 ) || warn "conda init zsh 失敗，略過。"
   done
 }
 
@@ -1444,26 +1445,26 @@ run_conda_init() {
 # 產生 head / tail 區段
 # ---------------------------------------------------------------------------
 
-# ~/.zshenv 是「每一次」zsh 啟動都會讀的檔案 —— 包含非互動的那些:
+# ~/.zshenv 是「每一次」zsh 啟動都會讀的檔案，包含非互動的那些：
 #   ssh host command、scp / rsync 的遠端那一頭、Claude Code / Codex 之類的 agent、CI。
 # ~/.zshrc 則「只有互動式 shell 才會讀」。
 #
-# 所以純粹是 PATH 的東西必須放在這裡,放 .zshrc 裡的話 `zsh -c ...` 一律拿不到。
-# 但也僅止於 PATH:任何要 eval / source 的重初始化(pyenv init、nvm、conda)
-# 都留在 .zshrc,免得拖慢每一次非互動呼叫。
+# 所以純粹是 PATH 的東西必須放在這裡，放 .zshrc 裡的話 `zsh -c ...` 一律拿不到。
+# 但也僅止於 PATH：任何要 eval / source 的重初始化（pyenv init、nvm、conda）
+# 都留在 .zshrc，免得拖慢每一次非互動呼叫。
 gen_env_block() {
   printf '%s\n' "$BLOCK_ENV_BEGIN"
   cat <<'EOS'
-# 這個區段由 install-zsh-p10k 產生,重跑安裝腳本時會被整段覆寫。
+# 這個區段由 install-zsh-p10k 產生，重跑安裝腳本時會被整段覆寫。
 #
-# ~/.zshenv 每一次 zsh 啟動都會讀到,包含 ssh host command、scp、agent、CI。
-# 請只在這裡放輕量的環境變數與 PATH,不要放任何會輸出東西或會 eval 的初始化。
+# ~/.zshenv 每一次 zsh 啟動都會讀到，包含 ssh host command、scp、agent、CI。
+# 請只在這裡放輕量的環境變數與 PATH，不要放任何會輸出東西或會 eval 的初始化。
 EOS
 
   if [ "$DET_ENV_HAS_TYPESET_U" -eq 0 ]; then
     cat <<'EOS'
 
-# typeset -U 讓 PATH 自動去重,所以這裡無條件加也不會愈長愈長。
+# typeset -U 讓 PATH 自動去重，所以這裡無條件加也不會愈長愈長。
 typeset -U path PATH
 EOS
   fi
@@ -1472,7 +1473,7 @@ EOS
     cat <<'EOS'
 
 # If you come from bash you might have to change your $PATH.
-# 刻意不檢查目錄存不存在:~/.local/bin 常常是 pip install --user 之後才生出來的。
+# 刻意不檢查目錄存不存在：~/.local/bin 常常是 pip install --user 之後才生出來的。
 export PATH=$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH
 EOS
   fi
@@ -1484,7 +1485,7 @@ EOS
       pyenv)
         cat <<'EOS'
 
-# pyenv:只把 shims 與 bin 掛上 PATH。`pyenv init` 的 eval 在 .zshrc 裡。
+# pyenv：只把 shims 與 bin 掛上 PATH。`pyenv init` 的 eval 在 .zshrc 裡。
 export PYENV_ROOT="$HOME/.pyenv"
 [[ -d "$PYENV_ROOT/shims" ]] && path=("$PYENV_ROOT/shims" $path)
 [[ -d "$PYENV_ROOT/bin" ]]   && path=("$PYENV_ROOT/bin" $path)
@@ -1531,29 +1532,29 @@ write_zshenv() {
   backup_file "$ZSHENV"
   install_over "$new" "$ZSHENV"
   rm -f "$tmp"
-  ok "~/.zshenv 已更新(非互動 zsh 的 PATH)"
+  ok "~/.zshenv 已更新（非互動 zsh 的 PATH）"
 }
 
 gen_head_block() {
   printf '%s\n' "$BLOCK_HEAD_BEGIN"
   cat <<'EOS'
-# 這個區段由 install-zsh-p10k 產生,重跑安裝腳本時會被整段覆寫。
-# 想加自己的設定,請寫在這兩個標記「之外」,或寫進 ~/.zshrc.local。
+# 這個區段由 install-zsh-p10k 產生，重跑安裝腳本時會被整段覆寫。
+# 想加自己的設定，請寫在這兩個標記「之外」，或寫進 ~/.zshrc.local。
 #
-# PATH 與 typeset -U 不在這裡,在 ~/.zshenv 的 env 區段。
-# ~/.zshenv 一定比 ~/.zshrc 先讀,而且非互動 shell 也讀得到,所以放這裡是多的。
+# PATH 與 typeset -U 不在這裡，在 ~/.zshenv 的 env 區段。
+# ~/.zshenv 一定比 ~/.zshrc 先讀，而且非互動 shell 也讀得到，所以放這裡是多的。
 EOS
 
   local tool
   for tool in "${DET_WHITELIST[@]:-}"; do
     [ -z "$tool" ] && continue
     [ "$tool" = "conda" ] && continue
-    printf '\n# %s(從你的 bash 設定偵測到)\n' "$tool"
+    printf '\n# %s（從你的 bash 設定偵測到）\n' "$tool"
     whitelist_snippet "$tool"
   done
 
   # 非互動 shell 的提前 return。
-  # 完整模式一定插;附加模式預設不插,避免改變既有機器的行為。
+  # 完整模式一定插；附加模式預設不插，避免改變既有機器的行為。
   local want_guard=0
   [ "$DET_ZSHRC_MODE" = "full" ] && want_guard=1
   [ "$OPT_INTERACTIVE_GUARD" -eq 1 ] && want_guard=1
@@ -1562,17 +1563,17 @@ EOS
   if [ "$want_guard" -eq 1 ]; then
     cat <<'EOS'
 
-# 保險用的煞車。zsh 本來就只有互動式 shell 會讀 ~/.zshrc,所以這行平常不會觸發;
-# 但如果有人用 `zsh -i -c ...` 之類的方式跑自動化,它就派得上用場。
-# 非互動 shell 需要的 PATH 在 ~/.zshenv 裡,那個檔案每次啟動都會讀到。
+# 保險用的煞車。zsh 本來就只有互動式 shell 會讀 ~/.zshrc，所以這行平常不會觸發；
+# 但如果有人用 `zsh -i -c ...` 之類的方式跑自動化，它就派得上用場。
+# 非互動 shell 需要的 PATH 在 ~/.zshenv 裡，那個檔案每次啟動都會讀到。
 [[ -o interactive ]] || return
 EOS
   fi
 
-  # oh-my-zsh 的行為設定,必須在 oh-my-zsh 載入之前。
-  # 使用者區段裡已經有的,一律讓給使用者——我們不覆蓋他寫好的值。
+  # oh-my-zsh 的行為設定，必須在 oh-my-zsh 載入之前。
+  # 使用者區段裡已經有的，一律讓給使用者，我們不覆蓋他寫好的值。
   if [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] || [ "$DET_HAS_HIST_STAMPS" -eq 0 ]; then
-    printf '\n%s\n' '# oh-my-zsh 的行為設定,必須在 oh-my-zsh 載入之前。'
+    printf '\n%s\n' '# oh-my-zsh 的行為設定，必須在 oh-my-zsh 載入之前。'
     [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] && \
       printf "zstyle ':omz:update' mode %s\n" "$OPT_OMZ_UPDATE"
     [ "$DET_HAS_HIST_STAMPS" -eq 0 ] && \
@@ -1590,7 +1591,7 @@ if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]
 fi
 EOS
   else
-    printf '\n%s\n' "# (你的 .zshrc 裡已經有 p10k instant prompt,這裡不重複。)"
+    printf '\n%s\n' "# （你的 .zshrc 裡已經有 p10k instant prompt，這裡不重複。）"
   fi
 
   printf '%s\n' "$BLOCK_HEAD_END"
@@ -1599,7 +1600,7 @@ EOS
 gen_tail_block() {
   printf '%s\n' "$BLOCK_TAIL_BEGIN"
   cat <<'EOS'
-# 這個區段由 install-zsh-p10k 產生,重跑安裝腳本時會被整段覆寫。
+# 這個區段由 install-zsh-p10k 產生，重跑安裝腳本時會被整段覆寫。
 EOS
 
   if [ "$DET_ZSHRC_MODE" = "full" ]; then
@@ -1610,8 +1611,8 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 
 plugins=(
   git
-  sudo                      # 連按兩下 ESC,幫上一行補 sudo
-  extract                   # x foo.tar.gz —— 一個指令解所有壓縮格式
+  sudo                      # 連按兩下 ESC，幫上一行補 sudo
+  extract                   # x foo.tar.gz：一個指令解所有壓縮格式
   colored-man-pages
   zsh-autosuggestions
   fast-syntax-highlighting  # 這個要放最後
@@ -1628,7 +1629,7 @@ setopt HIST_IGNORE_ALL_DUPS HIST_REDUCE_BLANKS SHARE_HISTORY
 EOS
   fi
 
-  # 只有真的有東西要放,才寫出這個互動專用的區塊 —— 免得留下空的 if/fi。
+  # 只有真的有東西要放，才寫出這個互動專用的區塊，免得留下空的 if/fi。
   local interactive_body=""
   if [ "$DET_HAS_P10K_SOURCE" -eq 0 ]; then
     interactive_body+='  # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.'$'\n'
@@ -1646,10 +1647,10 @@ EOS
     printf '%s' "$interactive_body"
     printf '%s\n' 'fi'
   else
-    printf '\n%s\n' '# (p10k 設定與 Home/End 的 bindkey 你的 .zshrc 裡都已經有了,這裡不重複。)'
+    printf '\n%s\n' '# （p10k 設定與 Home/End 的 bindkey 你的 .zshrc 裡都已經有了，這裡不重複。）'
   fi
 
-  # 使用者區段裡已經 source 過的,讓給他,不再寫第二份。
+  # 使用者區段裡已經 source 過的，讓給他，不再寫第二份。
   if [ "$DET_HAS_BASH_ALIASES" -eq 0 ]; then
     cat <<'EOS'
 
@@ -1662,7 +1663,7 @@ EOS
   if [ "$DET_HAS_ZSHRC_LOCAL_SOURCE" -eq 0 ]; then
     cat <<'EOS'
 
-# 你自己的設定放這裡。這個檔案完全屬於你,安裝腳本永不覆蓋它。
+# 你自己的設定放這裡。這個檔案完全屬於你，安裝腳本永不覆蓋它。
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 EOS
   fi
@@ -1675,21 +1676,21 @@ write_zshrc() {
   tmp="$(mktemp)"
   new="$(mktemp)"
 
-  # user_region 而不是 strip_managed_blocks:加了 --clean-v2 時,這裡拿到的
+  # user_region 而不是 strip_managed_blocks：加了 --clean-v2 時，這裡拿到的
   # 是已經把 v2 骨架剔掉的版本。
   user_region > "$tmp"
 
   {
     gen_head_block
     printf '\n'
-    # 去掉使用者區段開頭與結尾多餘的空行,避免重跑一次多一行
+    # 去掉使用者區段開頭與結尾多餘的空行，避免重跑一次多一行
     sed -e '/./,$!d' "$tmp" | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba'
     printf '\n'
     gen_tail_block
   } > "$new"
 
   if [ -f "$ZSHRC" ] && cmp -s "$ZSHRC" "$new"; then
-    ok "~/.zshrc 已經是最新狀態,沒有變動。"
+    ok "~/.zshrc 已經是最新狀態，沒有變動。"
     if [ -d "$BACKUP_ROOT" ]; then
       local latest
       latest="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"
@@ -1702,7 +1703,7 @@ write_zshrc() {
   backup_file "$ZSHRC"
   install_over "$new" "$ZSHRC"
   rm -f "$tmp"
-  ok "~/.zshrc 已更新(模式:$DET_ZSHRC_MODE)"
+  ok "~/.zshrc 已更新（模式：$DET_ZSHRC_MODE）"
 }
 
 # ---------------------------------------------------------------------------
@@ -1715,7 +1716,7 @@ gen_zshrc_local() {
   if [ -f "$ZSHRC_LOCAL" ]; then
     if [ "$OPT_REFRESH_LOCAL" -eq 0 ]; then
       # 這個檔案一旦存在就完全屬於使用者。重跑安裝不該一直在旁邊丟 .new 檔。
-      info "~/.zshrc.local 已存在,跳過抽取(要重抽請加 --refresh-local)。"
+      info "~/.zshrc.local 已存在，跳過抽取（要重抽請加 --refresh-local）。"
       return 0
     fi
     out="${ZSHRC_LOCAL}.new"
@@ -1724,10 +1725,10 @@ gen_zshrc_local() {
 
   # 發行版出廠的 .bashrc 基準線。
   #
-  # 不濾掉它的話,抽出來的清一色是 Debian/Ubuntu 出廠就有的 ls/ll/la/l/grep 那幾個
-  # alias —— 而 oh-my-zsh 本來就提供功能更好的同名 alias。那種檔案打開來一行有用的
-  # 都沒有,只會讓人以為腳本抽壞了。
-  # 用機器上現成的 /etc/skel 當基準,比硬編一份清單準,而且會跟著發行版走。
+  # 不濾掉它的話，抽出來的清一色是 Debian/Ubuntu 出廠就有的 ls/ll/la/l/grep 那幾個
+  # alias，而 oh-my-zsh 本來就提供功能更好的同名 alias。那種檔案打開來一行有用的
+  # 都沒有，只會讓人以為腳本抽壞了。
+  # 用機器上現成的 /etc/skel 當基準，比硬編一份清單準，而且會跟著發行版走。
   local baseline
   baseline="$(mktemp)"
   local s
@@ -1740,11 +1741,11 @@ gen_zshrc_local() {
     for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
       [ -f "$f" ] || continue
       awk -v src="~/$(basename "$f")" -v hb="$HOOK_BEGIN" -v he="$HOOK_END" '
-        # 第一個檔案是 /etc/skel 基準線,只記不印
+        # 第一個檔案是 /etc/skel 基準線，只記不印
         NR == FNR { skel[$0] = 1; next }
         # 跳過本腳本自己寫進 .bash_profile 的 auto-start hook。
-        # 不跳的話會把我們自己寫的 export SHELL="/usr/bin/zsh" 抽進 .zshrc.local——
-        # 腳本收割自己的產出,而且每重裝一次就多抽一次。
+        # 不跳的話會把我們自己寫的 export SHELL="/usr/bin/zsh" 抽進 .zshrc.local，
+        # 腳本收割自己的產出，而且每重裝一次就多抽一次。
         $0 == hb                       { inhook = 1 }
         $0 == he                       { inhook = 0; next }
         inhook                         { next }
@@ -1753,8 +1754,8 @@ gen_zshrc_local() {
         # 排除 bash 專屬、以及白名單已經處理掉的東西
         /^[ \t]*#/                     { next }
         /PS1|PROMPT_COMMAND|BASH_|shopt|^[ \t]*complete / { next }
-        # 白名單已經處理掉的工具。比對前先轉小寫——共用主機的 .bashrc 寫的是
-        # PYENV_ROOT,只比對小寫的 pyenv 會漏掉,那一行就會混進 .zshrc.local。
+        # 白名單已經處理掉的工具。比對前先轉小寫：共用主機的 .bashrc 寫的是
+        # PYENV_ROOT，只比對小寫的 pyenv 會漏掉，那一行就會混進 .zshrc.local。
         tolower($0) ~ /pyenv|nvm_dir|nvm\.sh|\.cargo|conda|gopath|npm-global/ { next }
         # 跟發行版出廠的一字不差 → 不是使用者加的
         $0 in skel                     { next }
@@ -1769,26 +1770,26 @@ gen_zshrc_local() {
 
   {
     cat <<'EOS'
-# ~/.zshrc.local — 你自己的 zsh 設定
+# ~/.zshrc.local：你自己的 zsh 設定
 #
 # 這個檔案由 ~/.zshrc 在最後 source。安裝腳本永遠不會覆蓋它。
-# 個人的 alias、export、函式寫在這裡,重跑安裝腳本不會弄丟。
+# 個人的 alias、export、函式寫在這裡，重跑安裝腳本不會弄丟。
 EOS
     if [ -n "$body" ]; then
       cat <<'EOS'
 #
 # 下面是安裝腳本從你的 .bashrc / .bash_profile / .profile 裡抽出來的、
-# 「偏離發行版出廠值」的 export 與 alias,全部都是註解掉的狀態。
+# 「偏離發行版出廠值」的 export 與 alias，全部都是註解掉的狀態。
 #
-# 為什麼不直接幫你開?因為 bash 與 zsh 的語意不完全一樣,
-# 而且有些 alias 在非互動情境下會出問題(例如被 .profile 當成指令呼叫)。
-# 請自己看過一遍,確定要的就把該行前面的 "# " 拿掉。
+# 為什麼不直接幫你開？因為 bash 與 zsh 的語意不完全一樣，
+# 而且有些 alias 在非互動情境下會出問題（例如被 .profile 當成指令呼叫）。
+# 請自己看過一遍，確定要的就把該行前面的 "# " 拿掉。
 EOS
       printf '%s\n' "$body"
     else
       cat <<'EOS'
 #
-# 你的 .bashrc 系列裡沒有偏離發行版出廠值的 export / alias,所以沒有東西要搬。
+# 你的 .bashrc 系列裡沒有偏離發行版出廠值的 export / alias，所以沒有東西要搬。
 EOS
     fi
   } > "$out"
@@ -1796,13 +1797,13 @@ EOS
 
   if [ "$is_new" -eq 1 ]; then
     if [ -n "$body" ]; then
-      ok "已產生 ~/.zshrc.local(抽到的內容全部註解掉,請自己挑要開哪幾行)"
+      ok "已產生 ~/.zshrc.local（抽到的內容全部註解掉，請自己挑要開哪幾行）"
     else
-      ok "已產生 ~/.zshrc.local(空的,給你放個人設定用)"
+      ok "已產生 ~/.zshrc.local（空的，給你放個人設定用）"
     fi
   else
-    warn "~/.zshrc.local 已存在,不覆蓋。新的抽取結果寫在 ~/.zshrc.local.new"
-    warn "  比對:diff ~/.zshrc.local ~/.zshrc.local.new"
+    warn "~/.zshrc.local 已存在，不覆蓋。新的抽取結果寫在 ~/.zshrc.local.new"
+    warn "  比對：diff ~/.zshrc.local ~/.zshrc.local.new"
   fi
 }
 
@@ -1812,20 +1813,20 @@ EOS
 
 change_login_shell() {
   DET_NEED_HOOK=0
-  [ "$DET_NEED_CHSH" -eq 1 ] || { info "login shell 已經是 zsh,不動。"; return 0; }
+  [ "$DET_NEED_CHSH" -eq 1 ] || { info "login shell 已經是 zsh，不動。"; return 0; }
 
   local target="$DET_ZSH_PATH"
-  [ -x "$target" ] || { warn "找不到可執行的 zsh,略過 login shell 變更。"; DET_NEED_HOOK=1; return 0; }
+  [ -x "$target" ] || { warn "找不到可執行的 zsh，略過 login shell 變更。"; DET_NEED_HOOK=1; return 0; }
 
   if ! has_command chsh; then
-    warn "沒有 chsh,無法變更 login shell。"
+    warn "沒有 chsh，無法變更 login shell。"
     DET_NEED_HOOK=1
     return 0
   fi
 
-  # ~/.local/bin/zsh 這種使用者自編的 shell 不會在 /etc/shells 裡,chsh 會拒絕。
+  # ~/.local/bin/zsh 這種使用者自編的 shell 不會在 /etc/shells 裡，chsh 會拒絕。
   if [ -r /etc/shells ] && ! grep -qx "$target" /etc/shells; then
-    info "$target 不在 /etc/shells 裡,改用 ~/.bash_profile hook。"
+    info "$target 不在 /etc/shells 裡，改用 ~/.bash_profile hook。"
     DET_NEED_HOOK=1
     return 0
   fi
@@ -1838,11 +1839,11 @@ change_login_shell() {
     fi
   fi
   if sudo_run chsh -s "$target" "$(id -un)" >/dev/null 2>&1; then
-    ok "login shell 已改成 $target(透過 sudo)"
+    ok "login shell 已改成 $target（透過 sudo）"
     return 0
   fi
 
-  warn "自動變更 login shell 失敗。你可以自己跑:chsh -s $target"
+  warn "自動變更 login shell 失敗。你可以自己跑：chsh -s $target"
   DET_NEED_HOOK=1
 }
 
@@ -1853,26 +1854,26 @@ install_bash_profile_hook() {
   [ -x "$target" ] || return 0
 
   # bash 的 login shell 只會讀 .bash_profile / .bash_login / .profile 之中「第一個
-  # 存在的」。所以在只有 .profile 的機器上憑空生一個 .bash_profile,
-  # 等於把使用者的 .profile 整份停用——PATH、conda、proxy 全部一起消失。
+  # 存在的」。所以在只有 .profile 的機器上憑空生一個 .bash_profile，
+  # 等於把使用者的 .profile 整份停用，PATH、conda、proxy 全部一起消失。
   if [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.profile" ]; then
     info "這台沒有 ~/.bash_profile。新建的那份會先 source 你原本的 ~/.profile。"
     cat > "$HOME/.bash_profile" <<'EOF'
 # 這個檔案由 install-zsh-p10k 建立。
 #
-# bash 的 login shell 只讀 .bash_profile / .bash_login / .profile 之中第一個存在的,
-# 所以這個檔案一出現,你原本的 ~/.profile 就不會再被讀到了——下面這行把它讀回來。
+# bash 的 login shell 只讀 .bash_profile / .bash_login / .profile 之中第一個存在的，
+# 所以這個檔案一出現，你原本的 ~/.profile 就不會再被讀到了，下面這行把它讀回來。
 [ -f ~/.profile ] && . ~/.profile
 EOF
     chmod 600 "$HOME/.bash_profile"
   fi
   touch "$HOME/.bash_profile"
   if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
-    # 先移除舊的再寫新的,路徑才會跟著更新
+    # 先移除舊的再寫新的，路徑才會跟著更新
     remove_hook
   fi
 
-  info "login shell 沒改成,改在 ~/.bash_profile 裝一個保守的 auto-start hook。"
+  info "login shell 沒改成，改在 ~/.bash_profile 裝一個保守的 auto-start hook。"
   cat >> "$HOME/.bash_profile" <<EOF
 
 $HOOK_BEGIN
@@ -1887,7 +1888,7 @@ if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
 fi
 $HOOK_END
 EOF
-  ok "已寫入 ~/.bash_profile hook(指向 $target)"
+  ok "已寫入 ~/.bash_profile hook（指向 $target）"
 }
 
 remove_hook() {
@@ -1931,15 +1932,15 @@ do_rollback() {
     err "$BACKUP_ROOT 底下沒有還原點。"
     if find "$HOME" -maxdepth 1 -name '.zshrc.backup.*' 2>/dev/null | grep -q .; then
       err ""
-      err "家目錄裡有舊格式的散裝備份(~/.zshrc.backup.*)。那是 3.1.0 之前留下的,"
-      err "本指令不處理——它們沒有記錄「哪幾個檔案屬於同一次執行」,"
+      err "家目錄裡有舊格式的散裝備份（~/.zshrc.backup.*）。那是 3.1.0 之前留下的，"
+      err "本指令不處理，因為它們沒有記錄「哪幾個檔案屬於同一次執行」，"
       err "分別還原會湊出一個從來沒有存在過的組合。要用請自己 cp 回去。"
     fi
     exit 1
   fi
 
-  # 還原點裡的檔案一律以 . 開頭(.zshrc、.zshenv…),而 "$p"/* 這個 glob
-  # 不匹配 dotfile —— 用 glob 走訪會一個檔案都掃不到,而且完全不會報錯。
+  # 還原點裡的檔案一律以 . 開頭（.zshrc、.zshenv…），而 "$p"/* 這個 glob
+  # 不匹配 dotfile，用 glob 走訪會一個檔案都掃不到，而且完全不會報錯。
   restore_point_contents() {
     find "$1" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort
   }
@@ -1953,11 +1954,11 @@ do_rollback() {
       base="$(basename "$f")"
       cur="$HOME/$base"
       if [ ! -f "$cur" ]; then
-        printf '        %-14s %s目前不存在,還原會把它建回來%s\n' "$base" "$C_YEL" "$C_RESET"
+        printf '        %-14s %s目前不存在，還原會把它建回來%s\n' "$base" "$C_YEL" "$C_RESET"
       elif cmp -s "$f" "$cur"; then
         printf '        %-14s 與目前相同\n' "$base"
       else
-        printf '        %-14s %s與目前不同(%s 行差異)%s\n' "$base" "$C_YEL" \
+        printf '        %-14s %s與目前不同（%s 行差異）%s\n' "$base" "$C_YEL" \
           "$(diff "$f" "$cur" 2>/dev/null | grep -c '^[<>]' || true)" "$C_RESET"
       fi
     done < <(restore_point_contents "$p")
@@ -1966,30 +1967,30 @@ do_rollback() {
 
   local total="${#points[@]}"
   if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | grep -qv "^$total$"; then
-    printf '\n  %s(只列最近 %d 個。更舊的還在 %s 裡,沒有被刪。)%s\n' \
+    printf '\n  %s（只列最近 %d 個。更舊的還在 %s 裡，沒有被刪。）%s\n' \
       "$C_DIM" "$ROLLBACK_LIST_LIMIT" "$BACKUP_ROOT" "$C_RESET"
   fi
 
   local choice=1
   if [ "$OPT_YES" -eq 0 ] && have_tty; then
-    printf '\n要還原哪一個?[1-%d,直接 Enter = 1,q 放棄] ' "$total"
+    printf '\n要還原哪一個？[1-%d，直接 Enter = 1，q 放棄] ' "$total"
     read -r choice < /dev/tty || choice="q"
     [ -z "$choice" ] && choice=1
   else
-    info "非互動執行,選最新的還原點。"
+    info "非互動執行，選最新的還原點。"
   fi
 
   case "$choice" in
-    q|Q) printf '\n'; info "放棄還原,什麼都沒動。"; exit 0 ;;
-    ''|*[!0-9]*) die "不是有效的編號:$choice" ;;
+    q|Q) printf '\n'; info "放棄還原，什麼都沒動。"; exit 0 ;;
+    ''|*[!0-9]*) die "不是有效的編號：$choice" ;;
   esac
-  [ "$choice" -ge 1 ] && [ "$choice" -le "$total" ] || die "編號超出範圍:$choice"
+  [ "$choice" -ge 1 ] && [ "$choice" -le "$total" ] || die "編號超出範圍：$choice"
 
   local src="${points[$((choice - 1))]}"
   printf '\n'
   info "還原 $(basename "$src")"
 
-  # 還原本身也要能反悔:先把目前的狀態存成一個新的還原點。
+  # 還原本身也要能反悔：先把目前的狀態存成一個新的還原點。
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     backup_file "$HOME/$(basename "$f")"
@@ -2003,12 +2004,12 @@ do_rollback() {
   done < <(restore_point_contents "$src")
 
   printf '\n'
-  info "還原前的狀態存在 ${RESTORE_POINT:-(沒有東西需要備份)}"
+  info "還原前的狀態存在 ${RESTORE_POINT:-（沒有東西需要備份）}"
   printf '  開一個新的終端機視窗才會看到還原後的設定。\n\n'
 }
 
 do_uninstall() {
-  printf '\n%s解除安裝%s —— 只移除本腳本寫進去的東西。\n\n' "$C_BOLD" "$C_RESET"
+  printf '\n%s解除安裝%s：只移除本腳本寫進去的東西。\n\n' "$C_BOLD" "$C_RESET"
 
   local f tmp
   for f in "$ZSHRC" "$ZSHENV"; do
@@ -2033,9 +2034,9 @@ do_uninstall() {
     info "已移除記錄上次選項的 $STATE_FILE"
   fi
 
-  printf '\n%s以下東西刻意保留,要刪請自己來:%s\n' "$C_YEL" "$C_RESET"
+  printf '\n%s以下東西刻意保留，要刪請自己來：%s\n' "$C_YEL" "$C_RESET"
   printf '  ~/.oh-my-zsh          rm -rf ~/.oh-my-zsh\n'
-  printf '    (裡面可能有你自己放的 custom plugin / theme,所以不代為刪除)\n'
+  printf '    （裡面可能有你自己放的 custom plugin / theme，所以不代為刪除）\n'
   printf '  ~/.p10k.zsh           rm -f ~/.p10k.zsh\n'
   printf '  ~/.zshrc.local        rm -f ~/.zshrc.local\n'
   printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
@@ -2052,18 +2053,18 @@ do_uninstall() {
 print_font_guide() {
   cat <<EOF
 
-${C_BOLD}字型 —— 這一步要在「你手邊的終端機」上做,不是在這台機器上${C_RESET}
+${C_BOLD}字型：這一步要在「你手邊的終端機」上做，不是在這台機器上${C_RESET}
 
-Powerlevel10k 很依賴圖示字元。如果你看到一堆方塊或問號,那不是安裝失敗,
+Powerlevel10k 很依賴圖示字元。如果你看到一堆方塊或問號，那不是安裝失敗，
 是你的終端機沒有 MesloLGS NF 這套字型。
 
-  下載(四個都要):
+  下載（四個都要）：
     https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf
     https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf
     https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf
     https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf
 
-  裝好之後,在終端機裡把字型設成 MesloLGS NF:
+  裝好之後，在終端機裡把字型設成 MesloLGS NF：
     MobaXterm        Settings → Configuration → Terminal → Terminal font
     Windows Terminal 設定 → 設定檔 → 外觀 → 字型
     GNOME Terminal   Preferences → 你的 Profile → Text → Custom font
@@ -2082,14 +2083,14 @@ print_summary() {
   printf '  login shell    %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
   printf '\n'
   printf '%s下一步%s\n' "$C_BOLD" "$C_RESET"
-  printf '  1. 開一個新的終端機視窗(或重新 ssh 進來)\n'
-  printf '  2. 把終端機字型設成 MesloLGS NF —— 見下面說明\n'
+  printf '  1. 開一個新的終端機視窗（或重新 ssh 進來）\n'
+  printf '  2. 把終端機字型設成 MesloLGS NF（見下面說明）\n'
   [ -f "$ZSHRC_LOCAL" ] && \
-    printf '  3. 看一下 ~/.zshrc.local,把你要的 alias / export 取消註解\n'
+    printf '  3. 看一下 ~/.zshrc.local，把你要的 alias / export 取消註解\n'
   printf '\n'
-  printf '%s可以安心重跑%s:再跑一次這支腳本不會弄丟東西,它只重寫 ~/.zshrc 裡\n' "$C_DIM" "$C_RESET"
-  printf '%s兩個標記包起來的區段,區段外你自己寫的內容一律不動。%s\n' "$C_DIM" "$C_RESET"
-  printf '%s要移除:bash %s --uninstall%s\n' "$C_DIM" "$(basename "${BASH_SOURCE[0]:-install-zsh-p10k.sh}")" "$C_RESET"
+  printf '%s可以安心重跑%s：再跑一次這支腳本不會弄丟東西，它只重寫 ~/.zshrc 裡\n' "$C_DIM" "$C_RESET"
+  printf '%s兩個標記包起來的區段，區段外你自己寫的內容一律不動。%s\n' "$C_DIM" "$C_RESET"
+  printf '%s要移除：bash %s --uninstall%s\n' "$C_DIM" "$(basename "${BASH_SOURCE[0]:-install-zsh-p10k.sh}")" "$C_RESET"
 
   print_font_guide
   printf '\n'
@@ -2118,7 +2119,7 @@ main() {
   print_report
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
-    printf '\n%s--dry-run:到此為止,沒有修改任何檔案。%s\n\n' "$C_YEL" "$C_RESET"
+    printf '\n%s--dry-run：到此為止，沒有修改任何檔案。%s\n\n' "$C_YEL" "$C_RESET"
     exit 0
   fi
 
@@ -2153,10 +2154,10 @@ main() {
 # ---------------------------------------------------------------------------
 # 內建的 ~/.p10k.zsh template(gzip + base64)
 #
-# 為什麼內嵌:分發方式是單一連結 + curl | bash。多一個下載連結就多一個失敗模式。
-# 為什麼壓縮:原檔 95 KB,壓完約 25 KB,而且不會讓想 review 這支腳本的人
+# 為什麼內嵌：分發方式是單一連結 + curl | bash。多一個下載連結就多一個失敗模式。
+# 為什麼壓縮：原檔 95 KB，壓完約 25 KB，而且不會讓想 review 這支腳本的人
 # 滑過兩千行才看到邏輯結束。
-# 要重新產生:改 template_basic-admin_.p10.zsh.sh 之後跑 ./build.sh
+# 要重新產生：改 template_basic-admin_.p10.zsh.sh 之後跑 ./build.sh
 # ---------------------------------------------------------------------------
 
 P10K_TEMPLATE_B64='@@P10K_TEMPLATE_B64@@'

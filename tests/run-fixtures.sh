@@ -10,7 +10,7 @@ IMAGE="zsh-p10k-fixture:latest"
 IMAGE_BUSTER="zsh-p10k-fixture-buster:latest"
 INSTALLER="dist/install-zsh-p10k.sh"
 
-[ -f "$INSTALLER" ] || { echo "找不到 $INSTALLER,先跑 ./build.sh" >&2; exit 1; }
+[ -f "$INSTALLER" ] || { echo "找不到 $INSTALLER，先跑 ./build.sh" >&2; exit 1; }
 
 FIXTURES=("$@")
 [ "${#FIXTURES[@]}" -eq 0 ] && FIXTURES=(
@@ -19,7 +19,7 @@ FIXTURES=("$@")
   dotfiles-symlink sticky-options
 )
 
-# ancient-awk 要跑在 mawk 1.3.3 的映像上,那個映像只有它用得到。
+# ancient-awk 要跑在 mawk 1.3.3 的映像上，那個映像只有它用得到。
 need_buster=0
 for f in "${FIXTURES[@]}"; do
   [ "$f" = "ancient-awk" ] && need_buster=1
@@ -28,7 +28,7 @@ done
 echo "==> 建置測試映像"
 docker build -q -t "$IMAGE" tests/ >/dev/null || exit 1
 if [ "$need_buster" -eq 1 ]; then
-  echo "==> 建置 buster 映像(mawk 1.3.3)"
+  echo "==> 建置 buster 映像（mawk 1.3.3）"
   docker build -q -t "$IMAGE_BUSTER" -f tests/Dockerfile.buster tests/ >/dev/null || exit 1
 fi
 

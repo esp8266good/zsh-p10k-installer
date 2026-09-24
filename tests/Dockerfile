@@ -5,7 +5,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git curl ca-certificates sudo procps passwd less
 
-# 預先抓一份 oh-my-zsh 與 plugin 當 seed,給「已經裝好」的 fixture 用,
+# 預先抓一份 oh-my-zsh 與 plugin 當 seed，給「已經裝好」的 fixture 用，
 # 免得每個 fixture 都重新 clone 一次。
 RUN mkdir -p /opt/seed \
  && git clone --depth=1 -q https://github.com/ohmyzsh/ohmyzsh.git /opt/seed/oh-my-zsh \

@@ -1,10 +1,10 @@
-# 這個映像存在的唯一理由:它的 awk 是 mawk 1.3.3(1996 年版)。
+# 這個映像存在的唯一理由：它的 awk 是 mawk 1.3.3（1996 年版）。
 #
-# mawk 1.3.3 不支援 POSIX 字元類別,而且是靜默不匹配——[[:space:]] 不會報錯,
-# 只是永遠不成立。樹莓派(Raspbian buster)上 ~/.zshrc.local 一直產不出來
-# 就是這麼來的,而在 gawk / mawk 1.3.4 的機器上完全複現不出來。
+# mawk 1.3.3 不支援 POSIX 字元類別，而且是靜默不匹配：[[:space:]] 不會報錯，
+# 只是永遠不成立。樹莓派（Raspbian buster）上 ~/.zshrc.local 一直產不出來
+# 就是這麼來的，而在 gawk / mawk 1.3.4 的機器上完全複現不出來。
 #
-# buster 已經 EOL,套件索引搬到 archive.debian.org 而且不再有簽章更新。
+# buster 已經 EOL，套件索引搬到 archive.debian.org 而且不再有簽章更新。
 FROM debian:buster
 
 RUN printf '%s\n' \

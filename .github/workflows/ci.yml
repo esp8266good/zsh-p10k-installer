@@ -23,8 +23,8 @@ jobs:
           docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable \
             -S warning dist/install-zsh-p10k.sh build.sh tests/run-fixtures.sh tests/incontainer.sh
 
-      # 打 tag 發版時,tag 必須跟腳本裡的 SCRIPT_VERSION 一致。
-      # 不一致的話,使用者看到的「install-zsh-p10k v3.x.y」會跟 Release 頁面對不起來。
+      # 打 tag 發版時，tag 必須跟腳本裡的 SCRIPT_VERSION 一致。
+      # 不一致的話，使用者看到的「install-zsh-p10k v3.x.y」會跟 Release 頁面對不起來。
       - name: tag matches SCRIPT_VERSION
         if: startsWith(github.ref, 'refs/tags/v')
         run: |

@@ -7,7 +7,7 @@
 ### 安裝器怎麼看待目標機器
 
 **目標機**：
-腳本實際執行的那台機器。與「終端機」不同——使用者多半是 ssh 進目標機的。
+腳本實際執行的那台機器。與「終端機」不同：使用者多半是 ssh 進目標機的。
 _Avoid_: 遠端、伺服器、本機
 
 **終端機**：
@@ -32,7 +32,7 @@ _Avoid_: 相容性、平台
 _Avoid_: 我們的區塊、腳本區段、template 區
 
 **env block**：
-`.zshenv` 裡的 managed block。`.zshenv` 是每一次 zsh 啟動都會讀的檔案——包含
+`.zshenv` 裡的 managed block。`.zshenv` 是每一次 zsh 啟動都會讀的檔案，包含
 `ssh host command`、scp、agent、CI 這些非互動情境。而 **`.zshrc` 只有互動式 shell 會讀**，
 所以任何非互動也需要的 PATH 只能放在這裡。
 反過來說這裡只放環境變數與 PATH：會輸出東西、或需要 eval / source 的初始化都不能放。
@@ -66,7 +66,7 @@ _Avoid_: 遷移、轉換、同步
 
 **白名單繼承**：
 針對認得出來的工具（pyenv、conda、nvm、cargo 等），產生該工具**官方的 zsh 寫法**。
-不是搬運 bash 的那一行——因為多數工具的 zsh 初始化寫法與 bash 不同。
+不是搬運 bash 的那一行，因為多數工具的 zsh 初始化寫法與 bash 不同。
 _Avoid_: 偵測安裝、自動設定
 
 **抽取繼承**：
@@ -91,11 +91,11 @@ _Avoid_: 去重、跳過、偵測
 ### 這台機器與你手邊的終端機
 
 **有桌面**：
-這台機器裝了桌面環境——判準是 `/usr/share/xsessions` 或 `/usr/share/wayland-sessions`
+這台機器裝了桌面環境，判斷方式是 `/usr/share/xsessions` 或 `/usr/share/wayland-sessions`
 裡真的有 session 檔，或者存在 display manager。這是決定「字型要不要裝在這台」的唯一依據。
 刻意不看 `$DISPLAY` 與 `$WAYLAND_DISPLAY`：sshd 開了 X11Forwarding 的話，
 從終端機連進來就會把 `DISPLAY` 設成 `localhost:10.0`，一台完全沒有桌面的伺服器會被判成有。
-「有桌面」不等於「你現在看得到圖形」——ssh 進一台有桌面的機器，字型照裝，
+「有桌面」不等於「你現在看得到圖形」：ssh 進一台有桌面的機器，字型照裝，
 但你要看到圖示，手邊的終端機也得裝一份。
 _Avoid_: 圖形介面、headless、GUI
 
@@ -120,7 +120,7 @@ _Avoid_: 舊區塊、v2 區段
 **還原點**：
 同一次執行改到的所有檔案，備份進 `~/.zsh-p10k-backups/<時間戳>/` 這同一個目錄，
 權限與原檔相同、目錄本身 700。沒改到任何檔案就不產生。
-舊版把備份散在家目錄（`~/.zshrc.backup.*`），那樣回答不了「把這台還原到上禮拜三」——
+舊版把備份散在家目錄（`~/.zshrc.backup.*`），那樣回答不了「把這台還原到上禮拜三」，因為
 `.zshrc` 與 `.zshenv` 各自最新的那一份可能來自不同次執行，
 分別還原會湊出一個從來沒存在過的組合。
 `--rollback` 只認得新格式，散裝的舊備份留著不動、也不使用。
