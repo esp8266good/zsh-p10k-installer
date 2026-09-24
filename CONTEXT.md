@@ -20,7 +20,7 @@ _Avoid_: 前端、client、本地
 _Avoid_: preview、summary、確認畫面
 
 **支援環境**：
-腳本願意動手的機器。目前定義為：Debian 系（有 `apt-get`），或已經有 zsh 可用的任何機器。
+腳本願意動手的機器。目前定義為：認得套件管理器的機器（`apt-get`、`dnf`、`pacman`、`zypper`），或已經有 zsh 可用的任何機器。
 其餘（Alpine、以及認不得套件管理器又沒有 zsh 的機器）一律明確報錯退出，不做部分安裝。
 _Avoid_: 相容性、平台
 

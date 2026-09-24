@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.2.0"
+SCRIPT_VERSION="3.2.1"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -33,7 +33,7 @@ SCRIPT_VERSION="3.2.0"
 # 而且是「靜默不匹配」：不報錯、不警告，regex 就是永遠不成立。
 # 樹莓派上 ~/.zshrc.local 一直產不出來，就是這麼來的。
 #
-# awk 程式裡要匹配空白請寫 [ \t]（awk 會把 \t 解成 tab,mawk 1.3.3 也會）。
+# awk 程式裡要匹配空白請寫 [ \t]（awk 會把 \t 解成 tab，mawk 1.3.3 也會）。
 # grep -E 不受影響，但 [ \t] 在 grep 的中括號裡是「反斜線或 t」，不是 tab，
 # 所以 grep 要用 $SP 這個帶字面 tab 的變數。
 # build.sh 會掃描所有 awk 程式，出現 [[: 就讓建置失敗。
@@ -54,8 +54,12 @@ LOCAL_BIN="$LOCAL_PREFIX/bin"
 LOCAL_SRC="$LOCAL_PREFIX/src"
 LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
 
+# 自己編 zsh 時下載的原始碼。sha256 寫死在這裡，對不上就不編譯。
+# 換版本時兩個一起改，hash 至少要從兩個不同來源下載核對過。
 NCURSES_VERSION="6.6"
-ZSH_BUILD_VERSION="5.9.1"
+NCURSES_SHA256="355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
+ZSH_BUILD_VERSION="5.9.2"
+ZSH_BUILD_SHA256="36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81"
 
 OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
 ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$OH_MY_ZSH_DIR/custom}"
@@ -502,7 +506,7 @@ install_over() {
 # 記住上一次的選擇
 #
 # 沒有這個的話，第一次用 --omz-update reminder 裝，下一次重跑忘了帶，
-# 就會悄悄變回 prompt;--interactive-guard 也會悄悄被拿掉。
+# 就會悄悄變回 prompt；--interactive-guard 也會悄悄被拿掉。
 # 「重跑是安全動作」不能要求使用者記得上次打過哪些旗標。
 # ---------------------------------------------------------------------------
 
@@ -1015,7 +1019,7 @@ print_report() {
             "$C_DIM" "$C_RESET"
         ;;
       *)
-        printf '  %s/etc/passwd             將把 login shell 從 %s 改成 zsh(%s)%s\n' \
+        printf '  %s/etc/passwd             將把 login shell 從 %s 改成 zsh（%s）%s\n' \
           "$C_YEL" "$DET_LOGIN_SHELL" "${DET_CHSH_METHOD#*:}" "$C_RESET"
         ;;
     esac
@@ -1099,7 +1103,7 @@ print_report() {
     printf '%s.zshrc 的來歷%s\n' "$C_DIM" "$C_RESET"
     printf '  %s有 %s/%s 行與 v2 的骨架相同，不足以判定是 v2 產物，不回收。%s\n' \
       "$C_DIM" "$DET_V2_MATCHED" "$DET_V2_TOTAL" "$C_RESET"
-    printf '  %s(ZSH_THEME= 、plugins=( 這些行本來就抄自 oh-my-zsh 官方 template,%s\n' "$C_DIM" "$C_RESET"
+    printf '  %s（ZSH_THEME= 、plugins=( 這些行本來就抄自 oh-my-zsh 官方 template，%s\n' "$C_DIM" "$C_RESET"
     printf '  %s 在任何 omz 使用者的 .zshrc 裡都會吻合，單看行數沒有鑑別力。）%s\n' "$C_DIM" "$C_RESET"
     printf '\n'
   fi
@@ -1199,6 +1203,31 @@ download_to() {
   mv "$part" "$out"
 }
 
+file_sha256() {
+  if has_command sha256sum; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif has_command shasum; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    return 1
+  fi
+}
+
+# 下載原始碼並核對 sha256。後面的網址依序試，前一個下載失敗才換下一個。
+# hash 對不上就直接停，不換下一個網址重試：那代表拿到的東西被動過，不是網路問題。
+fetch_verified() {
+  local out="$1" sha="$2" url got
+  shift 2
+  for url in "$@"; do
+    download_to "$out" "$url" || continue
+    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 $out。"; }
+    [ "$got" = "$sha" ] && return 0
+    rm -f "$out"
+    die "$out 的 sha256 對不上（預期 $sha，實際 $got）。不編譯來路不明的原始碼。"
+  done
+  die "下載失敗：$out"
+}
+
 download_if_missing() {
   local out="$1" url="$2"
   [ -f "$out" ] && return 0
@@ -1257,7 +1286,7 @@ build_zsh_locally() {
   if [ ! -f "$LOCAL_PREFIX/lib/libncursesw.so" ] && [ ! -f "$LOCAL_PREFIX/lib/libncurses.so" ]; then
     info "編譯 ncurses $NCURSES_VERSION"
     ( cd "$LOCAL_SRC"
-      download_to "ncurses-${NCURSES_VERSION}.tar.gz" \
+      fetch_verified "ncurses-${NCURSES_VERSION}.tar.gz" "$NCURSES_SHA256" \
         "https://ftp.gnu.org/pub/gnu/ncurses/ncurses-${NCURSES_VERSION}.tar.gz"
       tar -xzf "ncurses-${NCURSES_VERSION}.tar.gz"
       cd "ncurses-${NCURSES_VERSION}"
@@ -1274,8 +1303,10 @@ build_zsh_locally() {
   if [ ! -x "$LOCAL_BIN/zsh" ]; then
     info "編譯 zsh $ZSH_BUILD_VERSION"
     ( cd "$LOCAL_SRC"
-      download_to "zsh-${ZSH_BUILD_VERSION}.tar.xz" \
-        "https://www.zsh.org/pub/zsh-${ZSH_BUILD_VERSION}.tar.xz"
+      # zsh.org 一出新版就把舊版搬進 old/，所以兩個位置都要試。
+      fetch_verified "zsh-${ZSH_BUILD_VERSION}.tar.xz" "$ZSH_BUILD_SHA256" \
+        "https://www.zsh.org/pub/zsh-${ZSH_BUILD_VERSION}.tar.xz" \
+        "https://www.zsh.org/pub/old/zsh-${ZSH_BUILD_VERSION}.tar.xz"
       tar -xf "zsh-${ZSH_BUILD_VERSION}.tar.xz"
       cd "zsh-${ZSH_BUILD_VERSION}"
       CPPFLAGS="-I$LOCAL_PREFIX/include" \
@@ -1372,7 +1403,7 @@ install_p10k_template() {
     warn "內建 template 解壓失敗。安裝完成後請自己跑一次：p10k configure"
     return 0
   fi
-  ok "已寫入 ~/.p10k.zsh($(wc -c < "$HOME/.p10k.zsh") bytes)"
+  ok "已寫入 ~/.p10k.zsh（$(wc -c < "$HOME/.p10k.zsh") bytes）"
 }
 
 install_fonts() {
@@ -2043,7 +2074,7 @@ do_uninstall() {
   printf '  自編的 zsh            rm -rf %s/zsh %s/zsh*\n' "$LOCAL_BIN" "$LOCAL_SRC"
   printf '\n'
   printf '  login shell 目前是 %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
-  printf '  要改回 bash:chsh -s /bin/bash\n\n'
+  printf '  要改回 bash：chsh -s /bin/bash\n\n'
 }
 
 # ---------------------------------------------------------------------------

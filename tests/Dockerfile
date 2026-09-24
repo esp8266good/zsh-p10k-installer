@@ -1,6 +1,6 @@
 FROM debian:12
 
-# 刻意保留 /var/lib/apt/lists:fixture 與安裝器都要能在離線索引下 apt-get install zsh。
+# 刻意保留 /var/lib/apt/lists：fixture 與安裝器都要能在離線索引下 apt-get install zsh。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git curl ca-certificates sudo procps passwd less
