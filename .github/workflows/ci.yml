@@ -67,7 +67,7 @@ jobs:
 
   # macOS：每個情境都用暫存 HOME，iTerm2 也裝到暫存目錄，不碰 runner 的 /Applications。
   # macos-15 是 Apple silicon，macos-15-intel 是 Intel。
-  # runner 預裝了 Xcode，所以「沒有 Command Line Tools」那兩個情境會 SKIP，要在實機上測。
+  # runner 預裝了 Xcode，「沒有 Command Line Tools」的情境是用假的 xcode-select -p 模擬的。
   macos:
     needs: build
     runs-on: ${{ matrix.os }}

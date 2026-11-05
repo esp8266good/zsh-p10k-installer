@@ -55,10 +55,12 @@ ssh mac 'mkdir -p /tmp/s/dist /tmp/s/tests && mv /tmp/install-zsh-p10k.sh /tmp/s
 
 每個情境都用 `mktemp -d` 當 `HOME`，iTerm2 也裝到暫存目錄（`ZSH_P10K_APPS_DIR`），不碰真的 home 和 `/Applications`。
 CI 在 `macos-15`（Apple silicon）和 `macos-15-intel` 上各跑一次。
-runner 預裝了 Xcode，「沒有 Command Line Tools」的兩個情境會 SKIP，要在沒裝的實機上測。
+「沒有 Command Line Tools」的情境用一個假的 `xcode-select`（`FAKE_NO_CLT=1` 時 `-p` 回失敗）模擬，
+所以裝了 Xcode 的 runner 也測得到；測試也會放一個假的 `sudo`，確認 macOS 上一次都沒被叫到。
 
 有 tty 的情境用 `expect` 送答案，不用 `printf ... | script`：macOS 的 `script` 讀到 stdin 的 EOF 會送出 `^D`，
 而且比前面的輸入還早被處理，`read` 會讀到空字串。
+`expect` 的比對字串只能用 ASCII（`[y/N] `、`Ctrl-C`）：macOS 內建的 expect 5.45 遇到中文比對字串會 segfault。
 
 ## 寫法規則
 
