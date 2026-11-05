@@ -733,6 +733,11 @@ detect_pkg_mgr() {
 }
 
 detect_sudo() {
+  # macOS 上一律不用 sudo，連 sudo -n 探測都不跑：公司筆電的稽核會記到每一次嘗試。
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    DET_SUDO="no"
+    return 0
+  fi
   if ! has_command sudo; then
     DET_SUDO="no"
     return 0
@@ -1037,8 +1042,19 @@ macos_require_clt() {
   [ "$DET_MAC_CLT" -eq 1 ] && return 0
 
   warn "這台 Mac 沒有 Command Line Tools，git 不能用（/usr/bin/git 一執行就會跳安裝視窗）。"
+  # --dry-run 承諾不改東西，裝系統元件更不行：說明之後照樣印報告。
+  if [ "$OPT_DRY_RUN" -eq 1 ]; then
+    warn "真的安裝之前要先跑：xcode-select --install（不帶 --dry-run 而且有 tty 時，腳本會問你要不要幫忙叫出安裝視窗）"
+    return 0
+  fi
   if ask_yn "這台沒有 Command Line Tools（git 需要它），要幫你叫出安裝視窗嗎？[y/N] "; then
-    xcode-select --install >/dev/null 2>&1 || true
+    local xs_err
+    if ! xs_err="$(xcode-select --install 2>&1)"; then
+      err "叫不出 Command Line Tools 的安裝視窗：${xs_err:-（xcode-select 沒有說原因）}"
+      err "可能是被公司的管理工具擋掉了，或這台 Mac 現在沒有人登入桌面。"
+      err "請在這台 Mac 的桌面上自己跑：xcode-select --install，裝好再重跑一次這支腳本。這次什麼都沒改。"
+      exit 1
+    fi
     info "請在跳出來的視窗按「安裝」。裝好之後這裡會自動繼續（最多等 30 分鐘，Ctrl-C 可以中斷）。"
     local waited=0
     while ! xcode-select -p >/dev/null 2>&1; do
@@ -1079,7 +1095,11 @@ print_report() {
   printf '  系統            %s\n' "$DET_OS_PRETTY"
   if [ "$DET_IS_MACOS" -eq 1 ]; then
     printf '  套件管理器      不需要（只用 macOS 內建的 zsh、git、curl，不裝 Homebrew）\n'
-    printf '  Command Line Tools  有（git 可以用）\n'
+    if [ "$DET_MAC_CLT" -eq 1 ]; then
+      printf '  Command Line Tools  有（git 可以用）\n'
+    else
+      printf '  Command Line Tools  %s沒有：真的安裝前要先跑 xcode-select --install%s\n' "$C_YEL" "$C_RESET"
+    fi
   else
     printf '  套件管理器      %s\n' "$DET_PKG_MGR"
     printf '  sudo            %s\n' "$DET_SUDO"

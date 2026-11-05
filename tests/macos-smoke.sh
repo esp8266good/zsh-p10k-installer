@@ -32,18 +32,31 @@ OUT="$WORK/out.txt"
 RC=0
 XS_LOG="$WORK/xcode-select.log"
 
-# 假的 xcode-select：-p 轉給真的那個，--install 只記一筆，不真的跳視窗。
+SUDO_LOG="$WORK/sudo.log"
+
+# 假的 xcode-select：--install 只記一筆，不真的跳視窗。
+# FAKE_NO_CLT=1 時 -p 假裝失敗，這樣有裝 Command Line Tools 的機器（含 CI）也測得到那條路。
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/xcode-select" <<EOF
 #!/bin/sh
 case "\${1:-}" in
-  --install) echo "install" >> "$XS_LOG"; exit 1 ;;
+  --install) echo "install" >> "$XS_LOG"; echo "xcode-select: error: 假裝被 MDM 擋掉" >&2; exit 1 ;;
+  -p) [ "\${FAKE_NO_CLT:-0}" = 1 ] && { echo "xcode-select: error: unable to get active developer directory" >&2; exit 2; }
+      exec /usr/bin/xcode-select -p ;;
   *) exec /usr/bin/xcode-select "\$@" ;;
 esac
 EOF
 chmod +x "$WORK/bin/xcode-select"
 
-has_clt() { /usr/bin/xcode-select -p >/dev/null 2>&1; }
+# 假的 sudo：只記錄有沒有被呼叫。macOS 上安裝腳本一次都不該叫它。
+cat > "$WORK/bin/sudo" <<EOF
+#!/bin/sh
+echo "sudo \$*" >> "$SUDO_LOG"
+exit 1
+EOF
+chmod +x "$WORK/bin/sudo"
+
+no_sudo_called() { [ ! -s "$SUDO_LOG" ]; }
 
 new_home() { mktemp -d "$WORK/home.XXXXXX"; }
 
@@ -53,38 +66,47 @@ home_is_empty() { [ -z "$(find "$1" -mindepth 1 2>/dev/null | head -1)" ]; }
 # 這樣在終端機裡直接跑測試，也跟「ssh host command」一樣打不開 /dev/tty。
 run_notty() {
   local home="$1"; shift
-  : > "$XS_LOG"
+  : > "$XS_LOG"; : > "$SUDO_LOG"
   RC=0
   env HOME="$home" PATH="$WORK/bin:$PATH" \
     perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' \
     bash "$INSTALLER" "$@" < /dev/null > "$OUT" 2>&1 || RC=$?
 }
 
-# 有 tty 的跑法：用 expect 開一個 pty，等到提示文字出現才送答案。
+# 有 tty 的跑法：用 expect 開一個 pty，每出現一個提示就依序送一個答案。
 # 不用 `printf ... | script`：macOS 的 script 讀到 stdin 的 EOF 會往 pty 送 ^D，
 # 而且比前面的輸入還早被處理，read 讀到的會是空字串。
+# 比對只用 ASCII：每個 y/N 問題都以「[y/N] 」結尾，按 Enter 那一步有「Ctrl-C」。
+# macOS 內建的 expect 5.45 遇到中文的比對字串會 segfault（實測 3/3），
+# 所以問題內容改在跑完之後 grep 輸出檔檢查。
 cat > "$WORK/drive.exp" <<'EOF'
 set timeout 900
 set sep [lsearch -exact $argv --]
-set pairs [lrange $argv 0 [expr {$sep - 1}]]
+set answers [lrange $argv 0 [expr {$sep - 1}]]
 set cmd [lrange $argv [expr {$sep + 1}] end]
 spawn {*}$cmd
-foreach {pat ans} $pairs {
+foreach ans $answers {
   expect {
-    -ex $pat { send -- "$ans\r" }
-    timeout { puts "\nexpect: 等不到提示：$pat"; exit 98 }
-    eof { puts "\nexpect: 程式提早結束，等不到提示：$pat"; catch wait r; exit [lindex $r 3] }
+    -ex {[y/N] } { send -- "$ans\r" }
+    -ex {Ctrl-C} { send -- "$ans\r" }
+    timeout { puts "\nexpect: timeout waiting for prompt"; exit 98 }
+    eof { puts "\nexpect: program exited before prompt"; catch wait r; exit [lindex $r 3] }
   }
 }
-expect { eof {} timeout { puts "\nexpect: 等不到結束"; exit 97 } }
+expect {
+  -ex {[y/N] } { puts "\nexpect: unexpected y/N prompt"; exit 96 }
+  eof {}
+  timeout { puts "\nexpect: timeout waiting for exit"; exit 97 }
+}
 catch wait result
 exit [lindex $result 3]
 EOF
 
-# run_tty <home> [提示 答案]... -- [安裝腳本參數]...
+# run_tty <home> [答案]... -- [安裝腳本參數]...
+# 答案依提示出現的順序給；按 Enter 繼續那一步給空字串。
 run_tty() {
   local home="$1"; shift
-  : > "$XS_LOG"
+  : > "$XS_LOG"; : > "$SUDO_LOG"
   RC=0
   local pairs=()
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do pairs+=("$1"); shift; done
@@ -99,11 +121,12 @@ out_has() { grep -qF -- "$1" "$OUT"; }
 # 情境
 # ---------------------------------------------------------------------------
 
+# 「沒有 Command Line Tools」都用假的 xcode-select -p 模擬（FAKE_NO_CLT=1）。
+
 t_no_clt_notty() {
   banner "no-clt-notty"
-  has_clt && { skip "這台有 Command Line Tools"; return; }
   local h; h="$(new_home)"
-  run_notty "$h"
+  FAKE_NO_CLT=1 run_notty "$h"
   check "exit code 不是 0" '[ "$RC" -ne 0 ]'
   check "輸出提到 xcode-select --install" 'out_has "xcode-select --install"'
   check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
@@ -112,29 +135,49 @@ t_no_clt_notty() {
 
 t_no_clt_tty_no() {
   banner "no-clt-tty-no"
-  has_clt && { skip "這台有 Command Line Tools"; return; }
   local h; h="$(new_home)"
-  run_tty "$h" "要幫你叫出安裝視窗嗎" "n" --
+  FAKE_NO_CLT=1 run_tty "$h" "n" --
   check "有問要不要叫出安裝視窗" 'out_has "要幫你叫出安裝視窗嗎"'
   check "exit code 不是 0" '[ "$RC" -ne 0 ]'
   check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
   check "沒有執行 xcode-select --install" '[ ! -s "$XS_LOG" ]'
 }
 
+# --dry-run 承諾不改東西，所以就算有 tty 也不能提議安裝 Command Line Tools。
+t_no_clt_dryrun_tty() {
+  banner "no-clt-dryrun-tty"
+  local h; h="$(new_home)"
+  FAKE_NO_CLT=1 run_tty "$h" -- --dry-run
+  check "沒有問要不要叫出安裝視窗" '! out_has "要幫你叫出安裝視窗嗎"'
+  check "有說缺 Command Line Tools、要先跑 xcode-select --install" 'out_has "xcode-select --install"'
+  check "照樣印出事前報告" 'out_has "事前報告"'
+  check "沒有執行 xcode-select --install" '[ ! -s "$XS_LOG" ]'
+  check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
+}
+
+# 安裝視窗叫不出來（例如被 MDM 擋掉）時要馬上講，不能安靜地等 30 分鐘。
+t_no_clt_install_fails() {
+  banner "no-clt-install-fails"
+  local h start; h="$(new_home)"; start="$(date +%s)"
+  FAKE_NO_CLT=1 run_tty "$h" "y" --
+  check "exit code 不是 0" '[ "$RC" -ne 0 ]'
+  check "有試著叫出安裝視窗" '[ -s "$XS_LOG" ]'
+  check "60 秒內就結束，沒有乾等" '[ $(( $(date +%s) - start )) -lt 60 ]'
+  check "有說叫不出安裝視窗" 'out_has "叫不出"'
+  check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
+}
+
 t_dry_run_report() {
   banner "dry-run-report"
   local h; h="$(new_home)"
   run_notty "$h" --dry-run
-  if has_clt; then
-    check "exit 0" '[ "$RC" -eq 0 ]'
-    check "報告有 macOS" 'out_has "macOS"'
-    check "報告有系統版本" 'out_has "$(sw_vers -productVersion)"'
-    check "報告有架構" 'out_has "$(uname -m)"'
-  else
-    check "沒有 Command Line Tools 時提到 xcode-select --install" 'out_has "xcode-select --install"'
-  fi
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告有 macOS" 'out_has "macOS"'
+  check "報告有系統版本" 'out_has "$(sw_vers -productVersion)"'
+  check "報告有架構" 'out_has "$(uname -m)"'
   check "沒有判定成不支援" '! out_has "不支援這台機器"'
   check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
+  check "沒有呼叫 sudo" 'no_sudo_called'
 }
 
 sha_of() { shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -171,6 +214,7 @@ t_clean() {
   check "~/.p10k.zsh 寫好了" '[ -s "$h/.p10k.zsh" ]'
   check "四個字型在 ~/Library/Fonts" '[ "$(fonts_count "$h")" = 4 ]'
   check "沒有寫到 ~/.local/share/fonts" '[ ! -e "$h/.local/share/fonts" ]'
+  check "沒有呼叫 sudo" 'no_sudo_called'
   check "zsh -i 啟動沒有錯誤輸出" \
     '[ -z "$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)" ]'
 }
@@ -281,7 +325,7 @@ t_profile_tty_yes() {
   banner "profile-tty-yes"
   local h; h="$(fake_iterm_home)"
   # 先回答 profile 那題 y，再按 Enter 讓 confirm_or_exit 繼續。
-  ZSH_P10K_APPS_DIR="$h/apps" run_tty "$h" "要幫你在 iTerm2 加一個" "y" "按 Enter 繼續" "" -- --no-chsh
+  ZSH_P10K_APPS_DIR="$h/apps" run_tty "$h" "y" "" -- --no-chsh
   check "exit 0" '[ "$RC" -eq 0 ]'
   check "有問 profile 那題" 'out_has "要幫你在 iTerm2 加一個"'
   check "答 y 之後 profile 檔存在" '[ -f "$h/$PROFILE_REL" ]'
@@ -323,13 +367,16 @@ t_iterm2_notty() {
   check "報告有教 --iterm2" 'grep -E -- "--iterm2([^-]|$)" "$OUT" >/dev/null'
 }
 
-ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report clean rerun existing-setup uninstall-hint
+ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
+clean rerun existing-setup uninstall-hint
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
 run_scenario() {
   case "$1" in
     no-clt-notty)   t_no_clt_notty ;;
     no-clt-tty-no)  t_no_clt_tty_no ;;
+    no-clt-dryrun-tty) t_no_clt_dryrun_tty ;;
+    no-clt-install-fails) t_no_clt_install_fails ;;
     dry-run-report) t_dry_run_report ;;
     clean)          t_clean ;;
     rerun)          t_rerun ;;
