@@ -63,15 +63,32 @@ PATH 放在 `~/.zshenv` 是因為 **zsh 只有互動式 shell 會讀 `~/.zshrc`*
 | `--interactive-guard` / `--no-interactive-guard` | 在已有 oh-my-zsh 的機器也加上「非互動 shell 直接 return」 |
 | `--refresh-local` | 重新從 `.bashrc` 抽取 export / alias |
 | `--clean-v2` | 收回舊版 v2 寫進去的設定，見 [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md) |
-| `-y` | 不等確認 |
+| `--iterm2` / `--no-iterm2` | 只有 macOS：沒有 iTerm2 就直接裝 / 不問也不裝 |
+| `--iterm2-profile` / `--no-iterm2-profile` | 只有 macOS：加一個用 MesloLGS NF 的 iTerm2 profile / 不問也不加 |
+| `-y` | 不等確認。所有 `[y/N]` 的問題都照預設答案「不要」走，要裝 iTerm2 請明講 `--iterm2` |
 
-`--omz-update` 和帶斜線的那幾組會被記住，要改就在命令列明講一次。
+`--omz-update` 和 `--no-chsh` 這類用斜線列出的成對選項會被記住，要改就在命令列明講一次。iTerm2 那兩組不會記住，每次都要明講。
 
 ## 字型
 
 p10k 的圖示要 MesloLGS NF 字型，而且要裝在**你眼睛看著的那個終端機**那一端
 （MobaXterm、Windows Terminal…），不是 ssh 進去的那台。
 腳本只在目標機真的有桌面時才替它裝；判斷時不看 `$DISPLAY`，因為 X11 forwarding 會讓沒桌面的伺服器也有值。
+
+## macOS
+
+支援 macOS 13 以上，Apple silicon 和 Intel 都可以。用的是 macOS 內建的 zsh、git、curl，
+**不裝 Homebrew，也不會用 sudo**。安裝指令跟上面一樣。
+
+| 情況 | 腳本怎麼處理 |
+|---|---|
+| 沒有 Command Line Tools（git 一執行就跳安裝視窗） | 有 tty：問你要不要叫出 Apple 的安裝視窗，裝好就自動繼續。沒有 tty：說明要先跑 `xcode-select --install`，什麼都不改就結束 |
+| 字型 | 裝到 `~/Library/Fonts`，已經有同名檔案就不重下載 |
+| 沒有 iTerm2 | 問你要不要裝官方 3.7.7（核對 sha256 和簽章，放進 `/Applications`）。沒有 tty 就不裝 |
+| 有 iTerm2 | 問你要不要加一個字型設成 MesloLGS NF 的 profile。**不會改你原本的 profile**，也不會把它設成預設 |
+
+新的 profile 叫「zsh-p10k (MesloLGS NF)」。要讓新視窗都用它：iTerm2 → Settings → Profiles，選它，按 Other Actions → Set as Default。
+不想要了就刪掉 `~/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json`。
 
 ## 一次裝很多台
 
