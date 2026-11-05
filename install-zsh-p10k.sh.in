@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.3.0"
+SCRIPT_VERSION="3.3.1"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -1328,16 +1328,26 @@ confirm_or_exit() {
 # 先下載到旁邊的 .part，成功才改名。
 # 直接寫到 $out 的話，斷線會留下半個檔案，download_if_missing 之後看到檔案在
 # 就不再下載，字型從此壞著，重跑也修不好。
+#
+# 失敗會重試，總共 DOWNLOAD_TRIES 次，中間等 2、4 秒。
+# 只試一次的話，網路一抖字型就少一個：v3.3.0 的 CI 在 GitHub 的 Intel runner 上連續兩次這樣。
+DOWNLOAD_TRIES=3
 download_to() {
-  local out="$1" url="$2" part="$1.part"
-  if has_command curl; then
-    curl -fsSL -o "$part" "$url" || { rm -f "$part"; return 1; }
-  elif has_command wget; then
-    wget -q -O "$part" "$url" || { rm -f "$part"; return 1; }
-  else
-    die "curl 與 wget 都沒有，無法下載：$url"
-  fi
-  mv "$part" "$out"
+  local out="$1" url="$2" part="$1.part" try=1
+  while :; do
+    if has_command curl; then
+      curl -fsSL --connect-timeout 20 -o "$part" "$url" && { mv "$part" "$out"; return 0; }
+    elif has_command wget; then
+      wget -q -T 20 -O "$part" "$url" && { mv "$part" "$out"; return 0; }
+    else
+      die "curl 與 wget 都沒有，無法下載：$url"
+    fi
+    rm -f "$part"
+    [ "$try" -ge "$DOWNLOAD_TRIES" ] && return 1
+    warn "下載失敗，$((try * 2)) 秒後重試（第 ${try} 次）：$url"
+    sleep $((try * 2))
+    try=$((try + 1))
+  done
 }
 
 file_sha256() {

@@ -20,10 +20,22 @@ PASS=0
 FAIL=0
 SKIP=0
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
+# 每個情境第一次失敗時，把安裝腳本的 WARN / FAIL 行和最後 10 行輸出印出來，
+# CI 上才看得出是哪一步壞。
+DUMPED=0
+bad()  {
+  printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1))
+  if [ "$DUMPED" -eq 0 ] && [ -s "${OUT:-}" ]; then
+    DUMPED=1
+    printf '    ---- 安裝腳本的 WARN / FAIL ----\n'
+    grep -aE '\[(WARN|FAIL)\]|curl: |wget: ' "$OUT" | sed 's/^/    | /'
+    printf '    ---- 安裝腳本最後 10 行 ----\n'
+    tail -10 "$OUT" | sed 's/^/    | /'
+  fi
+}
 skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; SKIP=$((SKIP+1)); }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
-banner() { printf '\n\033[1m=== macOS 情境：%s ===\033[0m\n' "$1"; }
+banner() { DUMPED=0; printf '\n\033[1m=== macOS 情境：%s ===\033[0m\n' "$1"; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/zsh-p10k-smoke.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -258,6 +270,36 @@ EOF
   check "缺的三個字型補上了" '[ "$(fonts_count "$h")" = 4 ]'
 }
 
+# 網路不穩：每個字型的第一次下載都失敗，第二次才成功。腳本要自己重試，四個字型都要裝到。
+t_font_retry() {
+  banner "font-retry"
+  local h; h="$(new_home)"
+  local flaky="$WORK/flaky"
+  mkdir -p "$flaky/seen"
+  cat > "$flaky/curl" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    http*MesloLGS*)
+      key="\$(printf '%s' "\$a" | shasum | cut -c1-12)"
+      if [ ! -e "$flaky/seen/\$key" ]; then
+        : > "$flaky/seen/\$key"
+        echo "curl: (56) Failure when receiving data from the peer（假裝斷線）" >&2
+        exit 56
+      fi ;;
+  esac
+done
+exec /usr/bin/curl "\$@"
+EOF
+  chmod +x "$flaky/curl"
+  PATH="$flaky:$PATH" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "假的 curl 真的讓四個字型各失敗過一次" '[ "$(ls "$flaky/seen" | wc -l | tr -d " ")" = 4 ]'
+  check "重試之後四個字型都裝到了" '[ "$(fonts_count "$h")" = 4 ]'
+  check "沒有留下 .part" '[ -z "$(find "$h/Library/Fonts" -name "*.part" 2>/dev/null | head -1)" ]'
+  check "有說在重試" 'out_has "重試"'
+}
+
 t_uninstall_hint() {
   banner "uninstall-hint"
   local h; h="$(new_home)"
@@ -368,7 +410,7 @@ t_iterm2_notty() {
 }
 
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
-clean rerun existing-setup uninstall-hint
+clean rerun existing-setup uninstall-hint font-retry
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
 run_scenario() {
@@ -382,6 +424,7 @@ run_scenario() {
     rerun)          t_rerun ;;
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;
+    font-retry)     t_font_retry ;;
     profile-yes)    t_profile_yes ;;
     profile-keep)   t_profile_keep ;;
     profile-notty)  t_profile_notty ;;
