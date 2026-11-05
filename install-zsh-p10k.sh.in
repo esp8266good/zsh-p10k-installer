@@ -192,6 +192,30 @@ has_command() { command -v "$1" >/dev/null 2>&1; }
 # 所以要實際開一次才算數。
 have_tty() { { true < /dev/tty; } >/dev/null 2>&1; }
 
+# 問一個 y/N 問題，答 y 才回 0。
+# 只有在有 tty、而且沒有 -y 的時候才真的問；其他情況一律當成「不要」，
+# 這樣 curl | bash 從 ssh 跑的時候不會卡住等輸入。
+ask_yn() {
+  [ "$OPT_YES" -eq 1 ] && return 1
+  have_tty || return 1
+  local ans=""
+  printf '%s' "$1" > /dev/tty
+  read -r ans < /dev/tty || true
+  case "$ans" in y|Y|yes|YES) return 0 ;; esac
+  return 1
+}
+
+# 目前使用者的 login shell。macOS 沒有 getent，要問 Directory Service。
+login_shell_of_current_user() {
+  local s=""
+  if has_command getent; then
+    s="$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')" || s=""
+  elif has_command dscl; then
+    s="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')" || s=""
+  fi
+  printf '%s\n' "${s:-${SHELL:-unknown}}"
+}
+
 # ---------------------------------------------------------------------------
 # 前置檢查
 # ---------------------------------------------------------------------------
@@ -604,6 +628,11 @@ save_options() {
 
 DET_OS_ID=""
 DET_OS_PRETTY=""
+DET_ARCH=""
+DET_IS_MACOS=0
+DET_MACOS_VERSION=""
+DET_MACOS_MAJOR=0
+DET_MAC_CLT=0
 DET_PKG_MGR=""
 DET_PKG_INSTALL=""
 DET_SUDO=""
@@ -634,6 +663,19 @@ DET_NEED_HOOK=0
 DET_CHSH_METHOD=""
 
 detect_os() {
+  DET_ARCH="$(uname -m)"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    DET_IS_MACOS=1
+    DET_OS_ID="macos"
+    DET_MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null || echo unknown)"
+    DET_MACOS_MAJOR="${DET_MACOS_VERSION%%.*}"
+    case "$DET_MACOS_MAJOR" in ''|*[!0-9]*) DET_MACOS_MAJOR=0 ;; esac
+    DET_OS_PRETTY="macOS $DET_MACOS_VERSION ($DET_ARCH)"
+    # 沒裝 Command Line Tools 時 /usr/bin/git 還是在，但一執行就跳安裝視窗，
+    # 所以不能只看 command -v git。
+    if xcode-select -p >/dev/null 2>&1; then DET_MAC_CLT=1; else DET_MAC_CLT=0; fi
+    return 0
+  fi
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -884,8 +926,7 @@ detect_residue() {
 }
 
 detect_shell_change() {
-  DET_LOGIN_SHELL="$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
-  [ -z "$DET_LOGIN_SHELL" ] && DET_LOGIN_SHELL="${SHELL:-unknown}"
+  DET_LOGIN_SHELL="$(login_shell_of_current_user)"
 
   case "$DET_LOGIN_SHELL" in
     *zsh) DET_NEED_CHSH=0 ;;
@@ -954,6 +995,36 @@ check_supported() {
   exit 1
 }
 
+# macOS 沒有 Command Line Tools 就沒有能用的 git。
+# 有 tty 就問要不要叫出 Apple 的安裝視窗、等它裝好；沒有 tty 就說明後結束。
+# 一定要在動任何檔案之前跑（--dry-run 也跑，好讓報告講實話）。
+MAC_CLT_WAIT_MAX=1800
+MAC_CLT_POLL=5
+macos_require_clt() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ "$DET_MAC_CLT" -eq 1 ] && return 0
+
+  warn "這台 Mac 沒有 Command Line Tools，git 不能用（/usr/bin/git 一執行就會跳安裝視窗）。"
+  if ask_yn "這台沒有 Command Line Tools（git 需要它），要幫你叫出安裝視窗嗎？[y/N] "; then
+    xcode-select --install >/dev/null 2>&1 || true
+    info "請在跳出來的視窗按「安裝」。裝好之後這裡會自動繼續（最多等 30 分鐘，Ctrl-C 可以中斷）。"
+    local waited=0
+    while ! xcode-select -p >/dev/null 2>&1; do
+      [ "$waited" -ge "$MAC_CLT_WAIT_MAX" ] && \
+        die "等了 30 分鐘還沒裝好。裝好之後再重跑一次這支腳本。"
+      sleep "$MAC_CLT_POLL"
+      waited=$((waited + MAC_CLT_POLL))
+    done
+    DET_MAC_CLT=1
+    ok "Command Line Tools 裝好了"
+    return 0
+  fi
+
+  err "請先在這台 Mac 上跑：xcode-select --install"
+  err "裝好之後再重跑一次這支腳本。這次什麼都沒改。"
+  exit 1
+}
+
 # ---------------------------------------------------------------------------
 # 事前報告
 # ---------------------------------------------------------------------------
@@ -974,8 +1045,13 @@ print_report() {
   printf '%s============================================================%s\n' "$C_BOLD" "$C_RESET"
   printf '\n'
   printf '  系統            %s\n' "$DET_OS_PRETTY"
-  printf '  套件管理器      %s\n' "$DET_PKG_MGR"
-  printf '  sudo            %s\n' "$DET_SUDO"
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    printf '  套件管理器      不需要（只用 macOS 內建的 zsh、git、curl，不裝 Homebrew）\n'
+    printf '  Command Line Tools  有（git 可以用）\n'
+  else
+    printf '  套件管理器      %s\n' "$DET_PKG_MGR"
+    printf '  sudo            %s\n' "$DET_SUDO"
+  fi
   printf '  zsh             %s  [%s]\n' "$DET_ZSH_PATH" "$DET_ZSH_SOURCE"
   printf '  login shell     %s\n' "$DET_LOGIN_SHELL"
   if [ "$DET_HAS_DESKTOP" -eq 1 ]; then
@@ -2073,7 +2149,7 @@ do_uninstall() {
   printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
   printf '  自編的 zsh            rm -rf %s/zsh %s/zsh*\n' "$LOCAL_BIN" "$LOCAL_SRC"
   printf '\n'
-  printf '  login shell 目前是 %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
+  printf '  login shell 目前是 %s\n' "$(login_shell_of_current_user)"
   printf '  要改回 bash：chsh -s /bin/bash\n\n'
 }
 
@@ -2111,7 +2187,7 @@ print_summary() {
   printf '\n'
   printf '  zsh            %s\n' "$DET_ZSH_PATH"
   printf '  模式           %s\n' "$DET_ZSHRC_MODE"
-  printf '  login shell    %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
+  printf '  login shell    %s\n' "$(login_shell_of_current_user)"
   printf '\n'
   printf '%s下一步%s\n' "$C_BOLD" "$C_RESET"
   printf '  1. 開一個新的終端機視窗（或重新 ssh 進來）\n'
@@ -2147,6 +2223,7 @@ main() {
   run_detection
   infer_guard_from_block
   check_supported
+  macos_require_clt
   print_report
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
