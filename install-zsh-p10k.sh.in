@@ -52,7 +52,13 @@ HOOK_END="# END zsh-p10k-install auto start"
 LOCAL_PREFIX="$HOME/.local"
 LOCAL_BIN="$LOCAL_PREFIX/bin"
 LOCAL_SRC="$LOCAL_PREFIX/src"
-LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
+# macOS 的使用者字型目錄是 ~/Library/Fonts，放進去就生效，不需要 fc-cache。
+# 這裡要直接看 uname，因為 --uninstall 在偵測之前就會用到這個值。
+if [ "$(uname -s)" = "Darwin" ]; then
+  LOCAL_FONTS="$HOME/Library/Fonts"
+else
+  LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
+fi
 
 # 自己編 zsh 時下載的原始碼。sha256 寫死在這裡，對不上就不編譯。
 # 換版本時兩個一起改，hash 至少要從兩個不同來源下載核對過。
@@ -801,6 +807,11 @@ detect_desktop() {
   DET_HAS_DESKTOP=0
   DET_DESKTOP_EVIDENCE=""
   local d sessions
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    # Mac 一定有桌面，字型裝在這台上，坐在前面的人就用得到。
+    DET_HAS_DESKTOP=1
+    DET_DESKTOP_EVIDENCE="macOS"
+  fi
   for d in /usr/share/xsessions /usr/share/wayland-sessions; do
     [ -d "$d" ] || continue
     # 目錄空的不算，有些套件會留下空目錄
@@ -808,7 +819,7 @@ detect_desktop() {
                 sed 's|.*/||; s|\.desktop$||' | tr '\n' ' ')"
     [ -n "$sessions" ] || continue
     DET_HAS_DESKTOP=1
-    DET_DESKTOP_EVIDENCE="${DET_DESKTOP_EVIDENCE:+$DET_DESKTOP_EVIDENCE、}${sessions% }"
+    DET_DESKTOP_EVIDENCE="${DET_DESKTOP_EVIDENCE:+${DET_DESKTOP_EVIDENCE}、}${sessions% }"
   done
   if [ -e /etc/systemd/system/display-manager.service ]; then
     DET_HAS_DESKTOP=1
@@ -912,7 +923,7 @@ detect_residue() {
   DET_RESIDUE=()
   # v2 在明明有系統 zsh 的機器上多編出來的 ~/.local/bin/zsh
   if [ -x "$LOCAL_BIN/zsh" ] && [ "$DET_ZSH_SOURCE" = "system" ]; then
-    DET_RESIDUE+=("$LOCAL_BIN/zsh （系統已有 $DET_ZSH_PATH，這份自編的是多餘的）")
+    DET_RESIDUE+=("$LOCAL_BIN/zsh （系統已有 ${DET_ZSH_PATH}，這份自編的是多餘的）")
   fi
   # v2 的舊 hook
   if file_has "$HOME/.bash_profile" "BEGIN USER LOCAL ZSH AUTO START"; then
@@ -921,7 +932,7 @@ detect_residue() {
   # 舊格式的散裝備份。刻意不清：那是使用者手上唯一的還原素材。
   local n
   n="$(find "$HOME" -maxdepth 1 -name '.zshrc.backup.*' -o -maxdepth 1 -name '.zshenv.backup.*' 2>/dev/null | wc -l)"
-  [ "$n" -gt 0 ] && DET_RESIDUE+=("$n 份散在家目錄的舊格式備份（新的備份改放 $BACKUP_ROOT）")
+  [ "$n" -gt 0 ] && DET_RESIDUE+=("${n} 份散在家目錄的舊格式備份（新的備份改放 ${BACKUP_ROOT}）")
   return 0
 }
 
@@ -948,7 +959,7 @@ detect_shell_change() {
       DET_CHSH_METHOD="hook:$DET_ZSH_PATH 不在 /etc/shells 裡"
     elif have_tty; then
       DET_CHSH_METHOD="chsh:會當場問你密碼"
-    elif [ "$DET_SUDO" = "passwordless" ]; then
+    elif [ "$DET_IS_MACOS" -eq 0 ] && [ "$DET_SUDO" = "passwordless" ]; then
       DET_CHSH_METHOD="sudo:免密碼 sudo"
     else
       DET_CHSH_METHOD="hook:沒有 tty 可以輸入密碼，sudo 也要密碼"
@@ -1061,7 +1072,7 @@ print_report() {
       printf '                  %s要看到圖示，你手邊的終端機也要裝一份。%s\n' "$C_DIM" "$C_RESET"
     fi
   else
-    printf '  桌面環境        沒有（不看 $DISPLAY，因為 X11 forwarding 會讓它騙人）\n'
+    printf '  桌面環境        沒有（不看 $DISPLAY 變數，因為 X11 forwarding 會讓它騙人）\n'
   fi
   printf '  .zshrc 模式     %s\n' "$mode_desc"
   if [ "${#SAVED_OPTS_APPLIED[@]}" -gt 0 ]; then
@@ -1117,7 +1128,7 @@ print_report() {
   if [ "$OPT_NO_FONTS" -eq 1 ]; then
     printf '  MesloLGS NF 字型        跳過（--no-fonts）\n'
   elif [ "$DET_HAS_DESKTOP" -eq 1 ]; then
-    printf '  MesloLGS NF 字型        將安裝到 ~/.local/share/fonts（這台有桌面）\n'
+    printf '  MesloLGS NF 字型        將安裝到 %s（這台有桌面；已經有的檔案不重下載）\n' "~${LOCAL_FONTS#"$HOME"}"
   else
     printf '  MesloLGS NF 字型        跳過（這台沒有桌面，裝了也畫不出來）\n'
   fi
@@ -1214,7 +1225,7 @@ print_report() {
     if [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] && \
        grep -q "zstyle ':omz:update' mode disabled" "$ZSHRC" 2>/dev/null && \
        [ "$OPT_OMZ_UPDATE" != "disabled" ]; then
-      changes+=("oh-my-zsh 的更新提示：disabled → $OPT_OMZ_UPDATE（要維持原樣請加 --omz-update disabled）")
+      changes+=("oh-my-zsh 的更新提示：disabled → ${OPT_OMZ_UPDATE}（要維持原樣請加 --omz-update disabled）")
     fi
     if grep -q '^typeset -U path PATH$' "$ZSHRC" 2>/dev/null; then
       changes+=("head 區段不再重複 .zshenv 已有的 typeset -U 與 PATH 那一行")
@@ -1242,7 +1253,12 @@ print_report() {
     printf '  這種寫法沒有互動性判斷、沒有 tty 檢查、也沒有逃生開關，而且 .profile 連 sh 都會讀。\n'
     printf '  它會蓋掉本腳本設定的 login shell，你看到的環境跟報告講的會對不起來。\n'
     printf '  本腳本不動它：那不是舊版寫的，是手寫的。要拿掉請自己來：\n'
-    printf "    %ssed -i 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    if [ "$DET_IS_MACOS" -eq 1 ]; then
+      # BSD sed 的 -i 一定要接一個（可以是空的）副檔名參數。
+      printf "    %ssed -i '' 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    else
+      printf "    %ssed -i 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    fi
     printf '\n'
   fi
 
@@ -1296,10 +1312,10 @@ fetch_verified() {
   shift 2
   for url in "$@"; do
     download_to "$out" "$url" || continue
-    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 $out。"; }
+    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; }
     [ "$got" = "$sha" ] && return 0
     rm -f "$out"
-    die "$out 的 sha256 對不上（預期 $sha，實際 $got）。不編譯來路不明的原始碼。"
+    die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不編譯來路不明的原始碼。"
   done
   die "下載失敗：$out"
 }
@@ -1351,7 +1367,7 @@ install_missing_packages() {
 }
 
 build_zsh_locally() {
-  info "沒有系統 zsh 也裝不了，改為自行編譯到 $LOCAL_PREFIX。"
+  info "沒有系統 zsh 也裝不了，改為自行編譯到 ${LOCAL_PREFIX}。"
 
   local tool missing=()
   for tool in gcc make tar; do has_command "$tool" || missing+=("$tool"); done
@@ -1497,6 +1513,7 @@ install_fonts() {
     download_if_missing "$LOCAL_FONTS/MesloLGS NF ${name}.ttf" \
       "$base/MesloLGS%20NF%20${style}.ttf" || warn "字型下載失敗：$name"
   done
+  [ "$DET_IS_MACOS" -eq 1 ] && return 0
   has_command fc-cache && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true
 }
 
@@ -1810,7 +1827,7 @@ write_zshrc() {
   backup_file "$ZSHRC"
   install_over "$new" "$ZSHRC"
   rm -f "$tmp"
-  ok "~/.zshrc 已更新（模式：$DET_ZSHRC_MODE）"
+  ok "~/.zshrc 已更新（模式：${DET_ZSHRC_MODE}）"
 }
 
 # ---------------------------------------------------------------------------
@@ -1945,8 +1962,9 @@ change_login_shell() {
       return 0
     fi
   fi
-  if sudo_run chsh -s "$target" "$(id -un)" >/dev/null 2>&1; then
-    ok "login shell 已改成 $target（透過 sudo）"
+  # macOS 上一律不用 sudo。
+  if [ "$DET_IS_MACOS" -eq 0 ] && sudo_run chsh -s "$target" "$(id -un)" >/dev/null 2>&1; then
+    ok "login shell 已改成 ${target}（透過 sudo）"
     return 0
   fi
 
@@ -1995,7 +2013,7 @@ if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
 fi
 $HOOK_END
 EOF
-  ok "已寫入 ~/.bash_profile hook（指向 $target）"
+  ok "已寫入 ~/.bash_profile hook（指向 ${target}）"
 }
 
 remove_hook() {
@@ -2146,7 +2164,12 @@ do_uninstall() {
   printf '    （裡面可能有你自己放的 custom plugin / theme，所以不代為刪除）\n'
   printf '  ~/.p10k.zsh           rm -f ~/.p10k.zsh\n'
   printf '  ~/.zshrc.local        rm -f ~/.zshrc.local\n'
-  printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # ~/Library/Fonts 裡還有使用者自己的字型，絕對不能整個目錄刪掉。
+    printf '  字型                  rm -f ~/Library/Fonts/MesloLGS\\ NF\\ *.ttf\n'
+  else
+    printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
+  fi
   printf '  自編的 zsh            rm -rf %s/zsh %s/zsh*\n' "$LOCAL_BIN" "$LOCAL_SRC"
   printf '\n'
   printf '  login shell 目前是 %s\n' "$(login_shell_of_current_user)"
@@ -2158,6 +2181,17 @@ do_uninstall() {
 # ---------------------------------------------------------------------------
 
 print_font_guide() {
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    cat <<EOF
+
+${C_BOLD}字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF${C_RESET}
+
+    iTerm2        Settings → Profiles → Text → Font
+    Terminal.app  設定 → 描述檔 → 文字 → 字體 → 更改
+    VS Code       settings.json 加 "terminal.integrated.fontFamily": "MesloLGS NF"
+EOF
+    return 0
+  fi
   cat <<EOF
 
 ${C_BOLD}字型：這一步要在「你手邊的終端機」上做，不是在這台機器上${C_RESET}

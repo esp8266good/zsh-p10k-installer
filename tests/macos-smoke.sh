@@ -113,13 +113,105 @@ t_dry_run_report() {
   check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
 }
 
-ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report"
+sha_of() { shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; }
+
+# 去掉腳本管理的區塊，剩下的就是使用者自己的內容。
+strip_blocks() {
+  awk '/^# >>> zsh-p10k-install: /{skip=1; next} /^# <<< zsh-p10k-install: /{skip=0; next} !skip' "$1"
+}
+
+fonts_count() { find "$1/Library/Fonts" -maxdepth 1 -name 'MesloLGS NF *.ttf' 2>/dev/null | wc -l | tr -d ' '; }
+
+# clean 與 rerun 共用同一個 HOME，rerun 單獨跑時會自己先裝一次。
+CLEAN_HOME=""
+ensure_clean_home() {
+  [ -n "$CLEAN_HOME" ] && return 0
+  CLEAN_HOME="$(new_home)"
+  run_notty "$CLEAN_HOME" --no-chsh
+  CLEAN_RC="$RC"
+  cp "$OUT" "$WORK/clean-out.txt"
+}
+
+t_clean() {
+  banner "clean"
+  ensure_clean_home
+  local h="$CLEAN_HOME"
+  RC="$CLEAN_RC"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "oh-my-zsh 裝好了" '[ -f "$h/.oh-my-zsh/oh-my-zsh.sh" ]'
+  check "powerlevel10k 裝好了" '[ -d "$h/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+  local p
+  for p in zsh-autosuggestions fast-syntax-highlighting zsh-completions; do
+    check "外掛 $p 裝好了" '[ -d "$h/.oh-my-zsh/custom/plugins/$p" ]'
+  done
+  check "~/.p10k.zsh 寫好了" '[ -s "$h/.p10k.zsh" ]'
+  check "四個字型在 ~/Library/Fonts" '[ "$(fonts_count "$h")" = 4 ]'
+  check "沒有寫到 ~/.local/share/fonts" '[ ! -e "$h/.local/share/fonts" ]'
+  check "zsh -i 啟動沒有錯誤輸出" \
+    '[ -z "$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)" ]'
+}
+
+t_rerun() {
+  banner "rerun"
+  ensure_clean_home
+  local h="$CLEAN_HOME" a b c
+  a="$(sha_of "$h/.zshrc")"; b="$(sha_of "$h/.zshenv")"; c="$(sha_of "$h/.p10k.zsh")"
+  run_notty "$h" --no-chsh
+  check "第二次 exit 0" '[ "$RC" -eq 0 ]'
+  check ".zshrc 沒變" '[ "$(sha_of "$h/.zshrc")" = "$a" ]'
+  check ".zshenv 沒變" '[ "$(sha_of "$h/.zshenv")" = "$b" ]'
+  check ".p10k.zsh 沒變" '[ "$(sha_of "$h/.p10k.zsh")" = "$c" ]'
+}
+
+t_existing_setup() {
+  banner "existing-setup"
+  local h; h="$(new_home)"
+  git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$h/.oh-my-zsh" || { bad "clone oh-my-zsh 失敗"; return; }
+  cat > "$h/.zshrc" <<'EOF'
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git)
+source $ZSH/oh-my-zsh.sh
+alias mine=true
+EOF
+  printf '# my p10k\n' > "$h/.p10k.zsh"
+  mkdir -p "$h/Library/Fonts"
+  printf 'fake' > "$h/Library/Fonts/MesloLGS NF Regular.ttf"
+  cp "$h/.zshrc" "$WORK/zshrc.orig"
+  local p10k_sha; p10k_sha="$(sha_of "$h/.p10k.zsh")"
+
+  run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告是附加模式" 'out_has "附加模式"'
+  check "~/.p10k.zsh 沒被覆蓋" '[ "$(sha_of "$h/.p10k.zsh")" = "$p10k_sha" ]'
+  # 區塊前後會多一行空行當分隔，所以忽略空行再比。
+  check ".zshrc 使用者內容沒變（忽略空行）" 'strip_blocks "$h/.zshrc" | diff -qB - "$WORK/zshrc.orig" >/dev/null'
+  check "原本的字型檔沒被覆蓋" '[ "$(cat "$h/Library/Fonts/MesloLGS NF Regular.ttf")" = fake ]'
+  check "缺的三個字型補上了" '[ "$(fonts_count "$h")" = 4 ]'
+}
+
+t_uninstall_hint() {
+  banner "uninstall-hint"
+  local h; h="$(new_home)"
+  run_notty "$h" --uninstall
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "沒有叫人 rm -rf ~/Library/Fonts" '! grep -qE "rm -rf .*Library/Fonts" "$OUT"'
+  check "字型那行指名 MesloLGS NF" 'grep -E "Library/Fonts" "$OUT" | grep -q "MesloLGS"'
+  check "沒有 getent 的錯誤" '! out_has "getent"'
+  check "login shell 有值" 'grep -E "login shell 目前是 /" "$OUT" >/dev/null'
+}
+
+ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report clean rerun existing-setup uninstall-hint"
 
 run_scenario() {
   case "$1" in
     no-clt-notty)   t_no_clt_notty ;;
     no-clt-tty-no)  t_no_clt_tty_no ;;
     dry-run-report) t_dry_run_report ;;
+    clean)          t_clean ;;
+    rerun)          t_rerun ;;
+    existing-setup) t_existing_setup ;;
+    uninstall-hint) t_uninstall_hint ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }
