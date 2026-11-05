@@ -65,6 +65,13 @@ fi
 NCURSES_VERSION="6.6"
 NCURSES_SHA256="355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
 ZSH_BUILD_VERSION="5.9.2"
+
+# macOS 上可選擇安裝的 iTerm2。sha256 是官網 iterm2.com/downloads 公布的值，
+# 2026-11-05 自己下載重算過一次，一致。要升級時兩個一起改。
+ITERM2_VERSION="3.7.7"
+ITERM2_URL="https://iterm2.com/downloads/stable/iTerm2-3_7_7.zip"
+ITERM2_SHA256="549eb2b21464d7f4606165e51c36a6b1a252ac9a79958228a240152412759da2"
+ITERM2_MIN_MACOS=13
 ZSH_BUILD_SHA256="36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81"
 
 OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
@@ -1147,6 +1154,7 @@ print_report() {
     printf '  MesloLGS NF 字型        跳過（這台沒有桌面，裝了也畫不出來）\n'
   fi
   if [ "$DET_IS_MACOS" -eq 1 ]; then
+    printf '  iTerm2                  %s\n' "$(iterm2_install_plan)"
     printf '  iTerm2 profile          %s\n' "$(iterm2_profile_plan)"
   fi
   [ "$OPT_UPDATE" -eq 1 ] && printf '  %s已安裝的元件            會 git pull 更新（--update）%s\n' "$C_YEL" "$C_RESET"
@@ -1335,6 +1343,23 @@ fetch_verified() {
     die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不編譯來路不明的原始碼。"
   done
   die "下載失敗：$out"
+}
+
+# 跟 fetch_verified 一樣核對 sha256，但失敗時只警告並回 1，不結束整支腳本。
+# 給「裝不成也沒關係」的東西用（例如 iTerm2）。
+fetch_verified_soft() {
+  local out="$1" sha="$2" url got
+  shift 2
+  for url in "$@"; do
+    download_to "$out" "$url" || continue
+    got="$(file_sha256 "$out")" || { rm -f "$out"; warn "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; return 1; }
+    [ "$got" = "$sha" ] && return 0
+    rm -f "$out"
+    warn "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不安裝來路不明的檔案。"
+    return 1
+  done
+  warn "下載失敗：$*"
+  return 1
 }
 
 download_if_missing() {
@@ -1573,11 +1598,100 @@ detect_iterm2() {
   return 0
 }
 
+# iTerm2 要裝到哪裡。ZSH_P10K_APPS_DIR 只給測試用。
+# /Applications 在 admin 群組可寫，不需要 sudo；不可寫就退到 ~/Applications。
+iterm2_dest_dir() {
+  if [ -n "${ZSH_P10K_APPS_DIR:-}" ]; then
+    printf '%s\n' "$ZSH_P10K_APPS_DIR"
+  elif [ -w /Applications ]; then
+    printf '/Applications\n'
+  else
+    printf '%s/Applications\n' "$HOME"
+  fi
+}
+
+iterm2_supported_here() { [ "$DET_IS_MACOS" -eq 1 ] && [ "$DET_MACOS_MAJOR" -ge "$ITERM2_MIN_MACOS" ]; }
+
+# 這次「有可能」會裝 iTerm2（明講要裝，或等一下問得到人）。
+iterm2_may_install() {
+  [ -z "$DET_ITERM2_APP" ] && iterm2_supported_here || return 1
+  case "$OPT_ITERM2" in
+    yes) return 0 ;;
+    no)  return 1 ;;
+    *)   [ "$OPT_YES" -eq 0 ] && have_tty ;;
+  esac
+}
+
+# 事前報告裡 iTerm2 那一行要講的狀態。
+iterm2_install_plan() {
+  if [ -n "$DET_ITERM2_APP" ]; then
+    printf '已安裝（%s），不動' "$DET_ITERM2_APP"
+  elif ! iterm2_supported_here; then
+    printf '沒有安裝；iTerm2 %s 需要 macOS %s 以上，不提供安裝' "$ITERM2_VERSION" "$ITERM2_MIN_MACOS"
+  else
+    case "$OPT_ITERM2" in
+      yes) printf '會安裝 %s 到 %s（--iterm2，會核對 sha256）' "$ITERM2_VERSION" "$(iterm2_dest_dir)" ;;
+      no)  printf '沒有安裝，不裝（--no-iterm2）' ;;
+      *)   if [ "$OPT_YES" -eq 0 ] && have_tty; then
+             printf '沒有安裝，等一下會問你要不要裝'
+           else
+             printf '沒有安裝；沒有 tty 可以問你，要裝請加 --iterm2'
+           fi ;;
+    esac
+  fi
+}
+
+iterm2_install_choose() {
+  ITERM2_INSTALL_DO=0
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ -z "$DET_ITERM2_APP" ] || return 0
+  if ! iterm2_supported_here; then
+    if [ "$OPT_ITERM2" = "yes" ]; then
+      warn "iTerm2 ${ITERM2_VERSION} 需要 macOS ${ITERM2_MIN_MACOS} 以上，這台是 ${DET_MACOS_VERSION}，不裝。"
+    fi
+    return 0
+  fi
+  case "$OPT_ITERM2" in
+    yes) ITERM2_INSTALL_DO=1 ;;
+    no)  ;;
+    *)   if ask_yn "沒偵測到 iTerm2，要幫你裝嗎？（官方 ${ITERM2_VERSION}，會核對 sha256）[y/N] "; then
+           ITERM2_INSTALL_DO=1
+         fi ;;
+  esac
+  return 0
+}
+
+# 下載官方 zip → 核對 sha256 → 解壓 → 檢查簽章 → 搬到 Applications。
+# 任何一步失敗都只警告、清掉暫存檔，其他部分照常繼續。
+install_iterm2() {
+  [ "$ITERM2_INSTALL_DO" -eq 1 ] || return 0
+  local dest tmp sha
+  dest="$(iterm2_dest_dir)"
+  sha="${ZSH_P10K_ITERM2_SHA256_OVERRIDE:-$ITERM2_SHA256}"
+  tmp="$(mktemp -d)"
+  info "下載 iTerm2 ${ITERM2_VERSION}（約 65 MB）"
+  if ! fetch_verified_soft "$tmp/iTerm2.zip" "$sha" "$ITERM2_URL"; then
+    rm -rf "$tmp"; warn "iTerm2 沒有裝，其他部分照常繼續。"; return 0
+  fi
+  if ! ditto -x -k "$tmp/iTerm2.zip" "$tmp/x" || [ ! -d "$tmp/x/iTerm.app" ]; then
+    rm -rf "$tmp"; warn "iTerm2 解壓失敗，沒有裝。"; return 0
+  fi
+  if ! codesign --verify --deep --strict "$tmp/x/iTerm.app" 2>/dev/null; then
+    rm -rf "$tmp"; warn "iTerm2 的簽章檢查沒過，沒有裝。"; return 0
+  fi
+  if ! { mkdir -p "$dest" && mv "$tmp/x/iTerm.app" "$dest/"; }; then
+    rm -rf "$tmp"; warn "沒辦法把 iTerm.app 放進 ${dest}，沒有裝。"; return 0
+  fi
+  rm -rf "$tmp"
+  DET_ITERM2_APP="$dest/iTerm.app"
+  ok "iTerm2 ${ITERM2_VERSION} 裝好了：$DET_ITERM2_APP"
+}
+
 # 事前報告裡 iTerm2 profile 那一行要講的狀態。
 iterm2_profile_plan() {
   if [ -f "$ITERM2_PROFILE_FILE" ]; then
     printf '%s 已存在，不動' "~${ITERM2_PROFILE_FILE#"$HOME"}"
-  elif [ -z "$DET_ITERM2_APP" ]; then
+  elif [ -z "$DET_ITERM2_APP" ] && ! iterm2_may_install; then
     printf '不建立（沒有 iTerm2）'
   else
     case "$OPT_ITERM2_PROFILE" in
@@ -2372,6 +2486,7 @@ main() {
   fi
 
   # 所有選擇題都在動手之前問完。
+  iterm2_install_choose
   iterm2_profile_choose
   confirm_or_exit
 
@@ -2381,6 +2496,7 @@ main() {
   install_theme_and_plugins
   install_p10k_template
   install_fonts
+  install_iterm2
   install_iterm2_profile
 
   run_conda_init

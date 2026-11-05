@@ -287,8 +287,44 @@ t_profile_tty_yes() {
   check "答 y 之後 profile 檔存在" '[ -f "$h/$PROFILE_REL" ]'
 }
 
+# ---------------------------------------------------------------------------
+# iTerm2 安裝：真的下載官方 zip，但裝到暫存目錄，不碰 /Applications
+# ---------------------------------------------------------------------------
+
+t_iterm2_install() {
+  banner "iterm2-install"
+  local h; h="$(new_home)"; mkdir -p "$h/apps"
+  ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --iterm2 --no-iterm2-profile --no-chsh
+  local app="$h/apps/iTerm.app"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "iTerm.app 裝好了" '[ -d "$app" ]'
+  check "codesign 驗證通過" 'codesign --verify --deep --strict "$app" 2>/dev/null'
+  check "版本是 3.7.7" '[ "$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)" = 3.7.7 ]'
+  check "沒有留下 zip" '[ -z "$(find "$h" "${TMPDIR:-/tmp}" -maxdepth 2 -name "iTerm2-*.zip" 2>/dev/null | head -1)" ]'
+}
+
+t_bad_hash() {
+  banner "bad-hash"
+  local h; h="$(new_home)"; mkdir -p "$h/apps"
+  ZSH_P10K_ITERM2_SHA256_OVERRIDE="$(printf '0%.0s' $(seq 64))" ZSH_P10K_APPS_DIR="$h/apps" \
+    run_notty "$h" --iterm2 --no-chsh
+  check "exit 0（不讓整支腳本失敗）" '[ "$RC" -eq 0 ]'
+  check "輸出提到 sha256" 'out_has "sha256"'
+  check "沒有裝上 iTerm.app" '[ ! -e "$h/apps/iTerm.app" ]'
+  check "oh-my-zsh 照樣裝好" '[ -f "$h/.oh-my-zsh/oh-my-zsh.sh" ]'
+}
+
+t_iterm2_notty() {
+  banner "iterm2-notty"
+  local h; h="$(new_home)"; mkdir -p "$h/apps"
+  ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "沒 tty 時不裝 iTerm2" '[ ! -e "$h/apps/iTerm.app" ]'
+  check "報告有教 --iterm2" 'grep -E -- "--iterm2([^-]|$)" "$OUT" >/dev/null'
+}
+
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report clean rerun existing-setup uninstall-hint
-profile-yes profile-keep profile-notty profile-tty-yes"
+profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
 run_scenario() {
   case "$1" in
@@ -303,6 +339,9 @@ run_scenario() {
     profile-keep)   t_profile_keep ;;
     profile-notty)  t_profile_notty ;;
     profile-tty-yes) t_profile_tty_yes ;;
+    iterm2-install) t_iterm2_install ;;
+    bad-hash)       t_bad_hash ;;
+    iterm2-notty)   t_iterm2_notty ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }
