@@ -100,6 +100,9 @@ OPT_REFRESH_LOCAL=0
 OPT_CLEAN_V2=0
 OPT_ROLLBACK=0
 OPT_OMZ_UPDATE="prompt"
+# macOS 的 iTerm2 兩題：ask / yes / no。這是一次性的動作，不寫進記憶檔。
+OPT_ITERM2="ask"
+OPT_ITERM2_PROFILE="ask"
 
 # 命令列上明講過的選項。沒明講的，沿用上一次安裝時的選擇（見 load_saved_options）。
 OPTS_GIVEN=" "
@@ -137,6 +140,12 @@ install-zsh-p10k.sh：zsh + oh-my-zsh + Powerlevel10k 安裝器
                         （預設只有「完整模式」會插入，避免改變既有機器的行為）
   --no-interactive-guard  取消上次的 --interactive-guard
 
+  只有 macOS 才有的（沒帶的話，有 tty 會問你，沒有 tty 一律不做）：
+  --iterm2              沒有 iTerm2 就直接幫你裝（官方 zip，核對 sha256）
+  --no-iterm2           不問也不裝
+  --iterm2-profile      在 iTerm2 加一個用 MesloLGS NF 的 profile（不會改你原本的 profile）
+  --no-iterm2-profile   不問也不加
+
   --omz-update / --no-chsh / --no-fonts / --interactive-guard 會記在
   ~/.config/zsh-p10k-install/options，重跑時沒帶就沿用上次的選擇。
 
@@ -161,6 +170,10 @@ while [ $# -gt 0 ]; do
     --no-interactive-guard) OPT_INTERACTIVE_GUARD=0; OPTS_GIVEN+="interactive_guard " ;;
     --omz-update) shift; OPT_OMZ_UPDATE="${1:-}"; OPTS_GIVEN+="omz_update " ;;
     --omz-update=*) OPT_OMZ_UPDATE="${1#*=}"; OPTS_GIVEN+="omz_update " ;;
+    --iterm2) OPT_ITERM2="yes" ;;
+    --no-iterm2) OPT_ITERM2="no" ;;
+    --iterm2-profile) OPT_ITERM2_PROFILE="yes" ;;
+    --no-iterm2-profile) OPT_ITERM2_PROFILE="no" ;;
     -y|--yes) OPT_YES=1 ;;
     -h|--help) usage; exit 0 ;;
     *) printf '未知選項：%s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -983,6 +996,7 @@ run_detection() {
   detect_whitelist
   detect_residue
   detect_shell_change
+  detect_iterm2
 }
 
 # ---------------------------------------------------------------------------
@@ -1131,6 +1145,9 @@ print_report() {
     printf '  MesloLGS NF 字型        將安裝到 %s（這台有桌面；已經有的檔案不重下載）\n' "~${LOCAL_FONTS#"$HOME"}"
   else
     printf '  MesloLGS NF 字型        跳過（這台沒有桌面，裝了也畫不出來）\n'
+  fi
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    printf '  iTerm2 profile          %s\n' "$(iterm2_profile_plan)"
   fi
   [ "$OPT_UPDATE" -eq 1 ] && printf '  %s已安裝的元件            會 git pull 更新（--update）%s\n' "$C_YEL" "$C_RESET"
   printf '\n'
@@ -1520,6 +1537,94 @@ install_fonts() {
 # ---------------------------------------------------------------------------
 # 白名單片段
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# macOS：iTerm2
+# ---------------------------------------------------------------------------
+
+# iTerm2 的 Dynamic Profile：放進這個資料夾就會多出一個 profile，原本的 profile 一個字都不動，
+# 刪掉這個檔案就還原。官方文件：https://iterm2.com/documentation-dynamic-profiles.html
+ITERM2_PROFILE_FILE="$HOME/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json"
+ITERM2_PROFILE_NAME="zsh-p10k (MesloLGS NF)"
+ITERM2_PROFILE_FONT="MesloLGS-NF-Regular 13"
+# 寫死的 Guid：重跑時 iTerm2 才認得出是同一個 profile。
+ITERM2_PROFILE_GUID="c913bbe7-4655-4f80-9afb-4423668029d6"
+
+DET_ITERM2_APP=""
+ITERM2_INSTALL_DO=0
+ITERM2_PROFILE_DO=0
+
+# 印出找到的 iTerm.app 路徑。ZSH_P10K_APPS_DIR 只給測試用：有設就只看那裡。
+find_iterm2_app() {
+  local d
+  if [ -n "${ZSH_P10K_APPS_DIR:-}" ]; then
+    [ -d "$ZSH_P10K_APPS_DIR/iTerm.app" ] && { printf '%s\n' "$ZSH_P10K_APPS_DIR/iTerm.app"; return 0; }
+    return 1
+  fi
+  for d in /Applications "$HOME/Applications"; do
+    [ -d "$d/iTerm.app" ] && { printf '%s\n' "$d/iTerm.app"; return 0; }
+  done
+  return 1
+}
+
+detect_iterm2() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  DET_ITERM2_APP="$(find_iterm2_app)" || DET_ITERM2_APP=""
+  return 0
+}
+
+# 事前報告裡 iTerm2 profile 那一行要講的狀態。
+iterm2_profile_plan() {
+  if [ -f "$ITERM2_PROFILE_FILE" ]; then
+    printf '%s 已存在，不動' "~${ITERM2_PROFILE_FILE#"$HOME"}"
+  elif [ -z "$DET_ITERM2_APP" ]; then
+    printf '不建立（沒有 iTerm2）'
+  else
+    case "$OPT_ITERM2_PROFILE" in
+      yes) printf '會建立 %s（--iterm2-profile）' "$ITERM2_PROFILE_NAME" ;;
+      no)  printf '不建立（--no-iterm2-profile）' ;;
+      *)   if [ "$OPT_YES" -eq 0 ] && have_tty; then
+             printf '等一下會問你'
+           else
+             printf '不建立（沒有 tty 可以問你；要建立請加 --iterm2-profile）'
+           fi ;;
+    esac
+  fi
+}
+
+# 動手之前把 iTerm2 profile 那題問完。
+iterm2_profile_choose() {
+  ITERM2_PROFILE_DO=0
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ -f "$ITERM2_PROFILE_FILE" ] && return 0
+  [ -n "$DET_ITERM2_APP" ] || [ "$ITERM2_INSTALL_DO" -eq 1 ] || return 0
+  case "$OPT_ITERM2_PROFILE" in
+    yes) ITERM2_PROFILE_DO=1 ;;
+    no)  ;;
+    *)   if ask_yn "要幫你在 iTerm2 加一個用 MesloLGS NF 字型的 profile 嗎？（不會動你原本的 profile）[y/N] "; then
+           ITERM2_PROFILE_DO=1
+         fi ;;
+  esac
+  return 0
+}
+
+install_iterm2_profile() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  if [ -f "$ITERM2_PROFILE_FILE" ]; then
+    info "~${ITERM2_PROFILE_FILE#"$HOME"} 已存在，不覆蓋。"
+    return 0
+  fi
+  [ "$ITERM2_PROFILE_DO" -eq 1 ] || return 0
+  if [ -z "$(find_iterm2_app)" ]; then
+    warn "找不到 iTerm2，略過 iTerm2 profile。"
+    return 0
+  fi
+  mkdir -p "$(dirname "$ITERM2_PROFILE_FILE")"
+  printf '{"Profiles":[{"Name":"%s","Guid":"%s","Normal Font":"%s"}]}\n' \
+    "$ITERM2_PROFILE_NAME" "$ITERM2_PROFILE_GUID" "$ITERM2_PROFILE_FONT" > "$ITERM2_PROFILE_FILE"
+  ok "已在 iTerm2 加了 profile「${ITERM2_PROFILE_NAME}」"
+  info "要讓新視窗都用它：iTerm2 → Settings → Profiles，選 ${ITERM2_PROFILE_NAME}，按 Other Actions → Set as Default"
+}
 
 whitelist_snippet() {
   local tool="$1"
@@ -2167,6 +2272,7 @@ do_uninstall() {
   if [ "$(uname -s)" = "Darwin" ]; then
     # ~/Library/Fonts 裡還有使用者自己的字型，絕對不能整個目錄刪掉。
     printf '  字型                  rm -f ~/Library/Fonts/MesloLGS\\ NF\\ *.ttf\n'
+    printf '  iTerm2 profile        rm -f ~/Library/Application\\ Support/iTerm2/DynamicProfiles/zsh-p10k.json\n'
   else
     printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
   fi
@@ -2265,6 +2371,8 @@ main() {
     exit 0
   fi
 
+  # 所有選擇題都在動手之前問完。
+  iterm2_profile_choose
   confirm_or_exit
 
   ensure_zsh
@@ -2273,6 +2381,7 @@ main() {
   install_theme_and_plugins
   install_p10k_template
   install_fonts
+  install_iterm2_profile
 
   run_conda_init
   gen_zshrc_local

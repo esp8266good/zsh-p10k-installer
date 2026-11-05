@@ -60,13 +60,37 @@ run_notty() {
     bash "$INSTALLER" "$@" < /dev/null > "$OUT" 2>&1 || RC=$?
 }
 
-# 有 tty 的跑法：用 script 開一個 pty，input 依序餵進去。
+# 有 tty 的跑法：用 expect 開一個 pty，等到提示文字出現才送答案。
+# 不用 `printf ... | script`：macOS 的 script 讀到 stdin 的 EOF 會往 pty 送 ^D，
+# 而且比前面的輸入還早被處理，read 讀到的會是空字串。
+cat > "$WORK/drive.exp" <<'EOF'
+set timeout 900
+set sep [lsearch -exact $argv --]
+set pairs [lrange $argv 0 [expr {$sep - 1}]]
+set cmd [lrange $argv [expr {$sep + 1}] end]
+spawn {*}$cmd
+foreach {pat ans} $pairs {
+  expect {
+    -ex $pat { send -- "$ans\r" }
+    timeout { puts "\nexpect: 等不到提示：$pat"; exit 98 }
+    eof { puts "\nexpect: 程式提早結束，等不到提示：$pat"; catch wait r; exit [lindex $r 3] }
+  }
+}
+expect { eof {} timeout { puts "\nexpect: 等不到結束"; exit 97 } }
+catch wait result
+exit [lindex $result 3]
+EOF
+
+# run_tty <home> [提示 答案]... -- [安裝腳本參數]...
 run_tty() {
-  local input="$1" home="$2"; shift 2
+  local home="$1"; shift
   : > "$XS_LOG"
   RC=0
-  printf '%b' "$input" | env HOME="$home" PATH="$WORK/bin:$PATH" \
-    script -q /dev/null bash "$INSTALLER" "$@" > "$OUT" 2>&1 || RC=$?
+  local pairs=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do pairs+=("$1"); shift; done
+  [ "$#" -gt 0 ] && shift
+  env HOME="$home" PATH="$WORK/bin:$PATH" \
+    expect "$WORK/drive.exp" ${pairs[@]+"${pairs[@]}"} -- bash "$INSTALLER" "$@" > "$OUT" 2>&1 || RC=$?
 }
 
 out_has() { grep -qF -- "$1" "$OUT"; }
@@ -90,7 +114,7 @@ t_no_clt_tty_no() {
   banner "no-clt-tty-no"
   has_clt && { skip "這台有 Command Line Tools"; return; }
   local h; h="$(new_home)"
-  run_tty 'n\n' "$h"
+  run_tty "$h" "要幫你叫出安裝視窗嗎" "n" --
   check "有問要不要叫出安裝視窗" 'out_has "要幫你叫出安裝視窗嗎"'
   check "exit code 不是 0" '[ "$RC" -ne 0 ]'
   check "HOME 底下沒有任何檔案" 'home_is_empty "$h"'
@@ -199,9 +223,72 @@ t_uninstall_hint() {
   check "字型那行指名 MesloLGS NF" 'grep -E "Library/Fonts" "$OUT" | grep -q "MesloLGS"'
   check "沒有 getent 的錯誤" '! out_has "getent"'
   check "login shell 有值" 'grep -E "login shell 目前是 /" "$OUT" >/dev/null'
+  check "刻意保留清單有 iTerm2 profile" 'out_has "zsh-p10k.json"'
 }
 
-ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report clean rerun existing-setup uninstall-hint"
+# ---------------------------------------------------------------------------
+# iTerm2 profile：用一個假的 iTerm.app 目錄假裝有裝，不用真的下載
+# ---------------------------------------------------------------------------
+
+PROFILE_REL="Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json"
+EXPECTED_GUID="$(grep -o '^ITERM2_PROFILE_GUID="[^"]*"' "$INSTALLER" | cut -d'"' -f2)"
+
+fake_iterm_home() {
+  local h; h="$(new_home)"
+  mkdir -p "$h/apps/iTerm.app"
+  printf '%s\n' "$h"
+}
+
+plist_get() { plutil -extract "$2" raw -o - "$1" 2>/dev/null; }
+
+t_profile_yes() {
+  banner "profile-yes"
+  local h; h="$(fake_iterm_home)"
+  ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --iterm2-profile --no-chsh
+  local f="$h/$PROFILE_REL"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "profile 檔存在" '[ -f "$f" ]'
+  # plutil -lint 不吃 JSON，用 -convert 驗證 iTerm2 讀得懂這份 property list。
+  check "plutil 解析得了" 'plutil -convert xml1 -o /dev/null "$f"'
+  check "Name 正確" '[ "$(plist_get "$f" Profiles.0.Name)" = "zsh-p10k (MesloLGS NF)" ]'
+  check "字型是 MesloLGS-NF-Regular 13" '[ "$(plist_get "$f" "Profiles.0.Normal Font")" = "MesloLGS-NF-Regular 13" ]'
+  check "Guid 是腳本裡的常數" '[ -n "$EXPECTED_GUID" ] && [ "$(plist_get "$f" Profiles.0.Guid)" = "$EXPECTED_GUID" ]'
+  check "有教怎麼 Set as Default" 'out_has "Set as Default"'
+}
+
+t_profile_keep() {
+  banner "profile-keep"
+  local h; h="$(fake_iterm_home)"
+  mkdir -p "$(dirname "$h/$PROFILE_REL")"
+  printf '{"Profiles":[{"Name":"mine","Guid":"x"}]}\n' > "$h/$PROFILE_REL"
+  local before; before="$(sha_of "$h/$PROFILE_REL")"
+  ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --iterm2-profile --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "既有 profile 檔沒被改" '[ "$(sha_of "$h/$PROFILE_REL")" = "$before" ]'
+  check "有說已存在" 'grep -F "zsh-p10k.json" "$OUT" | grep -qF "已存在"'
+}
+
+t_profile_notty() {
+  banner "profile-notty"
+  local h; h="$(fake_iterm_home)"
+  ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "沒 tty 時不建立 profile" '[ ! -e "$h/$PROFILE_REL" ]'
+  check "報告有教 --iterm2-profile" 'out_has "--iterm2-profile"'
+}
+
+t_profile_tty_yes() {
+  banner "profile-tty-yes"
+  local h; h="$(fake_iterm_home)"
+  # 先回答 profile 那題 y，再按 Enter 讓 confirm_or_exit 繼續。
+  ZSH_P10K_APPS_DIR="$h/apps" run_tty "$h" "要幫你在 iTerm2 加一個" "y" "按 Enter 繼續" "" -- --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "有問 profile 那題" 'out_has "要幫你在 iTerm2 加一個"'
+  check "答 y 之後 profile 檔存在" '[ -f "$h/$PROFILE_REL" ]'
+}
+
+ALL_SCENARIOS="no-clt-notty no-clt-tty-no dry-run-report clean rerun existing-setup uninstall-hint
+profile-yes profile-keep profile-notty profile-tty-yes"
 
 run_scenario() {
   case "$1" in
@@ -212,6 +299,10 @@ run_scenario() {
     rerun)          t_rerun ;;
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;
+    profile-yes)    t_profile_yes ;;
+    profile-keep)   t_profile_keep ;;
+    profile-notty)  t_profile_notty ;;
+    profile-tty-yes) t_profile_tty_yes ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }
