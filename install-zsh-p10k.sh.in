@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.2.1"
+SCRIPT_VERSION="3.3.0"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -52,13 +52,26 @@ HOOK_END="# END zsh-p10k-install auto start"
 LOCAL_PREFIX="$HOME/.local"
 LOCAL_BIN="$LOCAL_PREFIX/bin"
 LOCAL_SRC="$LOCAL_PREFIX/src"
-LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
+# macOS 的使用者字型目錄是 ~/Library/Fonts，放進去就生效，不需要 fc-cache。
+# 這裡要直接看 uname，因為 --uninstall 在偵測之前就會用到這個值。
+if [ "$(uname -s)" = "Darwin" ]; then
+  LOCAL_FONTS="$HOME/Library/Fonts"
+else
+  LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
+fi
 
 # 自己編 zsh 時下載的原始碼。sha256 寫死在這裡，對不上就不編譯。
 # 換版本時兩個一起改，hash 至少要從兩個不同來源下載核對過。
 NCURSES_VERSION="6.6"
 NCURSES_SHA256="355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
 ZSH_BUILD_VERSION="5.9.2"
+
+# macOS 上可選擇安裝的 iTerm2。sha256 是官網 iterm2.com/downloads 公布的值，
+# 2026-11-05 自己下載重算過一次，一致。要升級時兩個一起改。
+ITERM2_VERSION="3.7.7"
+ITERM2_URL="https://iterm2.com/downloads/stable/iTerm2-3_7_7.zip"
+ITERM2_SHA256="549eb2b21464d7f4606165e51c36a6b1a252ac9a79958228a240152412759da2"
+ITERM2_MIN_MACOS=13
 ZSH_BUILD_SHA256="36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81"
 
 OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
@@ -94,6 +107,9 @@ OPT_REFRESH_LOCAL=0
 OPT_CLEAN_V2=0
 OPT_ROLLBACK=0
 OPT_OMZ_UPDATE="prompt"
+# macOS 的 iTerm2 兩題：ask / yes / no。這是一次性的動作，不寫進記憶檔。
+OPT_ITERM2="ask"
+OPT_ITERM2_PROFILE="ask"
 
 # 命令列上明講過的選項。沒明講的，沿用上一次安裝時的選擇（見 load_saved_options）。
 OPTS_GIVEN=" "
@@ -131,6 +147,12 @@ install-zsh-p10k.sh：zsh + oh-my-zsh + Powerlevel10k 安裝器
                         （預設只有「完整模式」會插入，避免改變既有機器的行為）
   --no-interactive-guard  取消上次的 --interactive-guard
 
+  只有 macOS 才有的（沒帶的話，有 tty 會問你，沒有 tty 一律不做）：
+  --iterm2              沒有 iTerm2 就直接幫你裝（官方 zip，核對 sha256）
+  --no-iterm2           不問也不裝
+  --iterm2-profile      在 iTerm2 加一個用 MesloLGS NF 的 profile（不會改你原本的 profile）
+  --no-iterm2-profile   不問也不加
+
   --omz-update / --no-chsh / --no-fonts / --interactive-guard 會記在
   ~/.config/zsh-p10k-install/options，重跑時沒帶就沿用上次的選擇。
 
@@ -155,6 +177,10 @@ while [ $# -gt 0 ]; do
     --no-interactive-guard) OPT_INTERACTIVE_GUARD=0; OPTS_GIVEN+="interactive_guard " ;;
     --omz-update) shift; OPT_OMZ_UPDATE="${1:-}"; OPTS_GIVEN+="omz_update " ;;
     --omz-update=*) OPT_OMZ_UPDATE="${1#*=}"; OPTS_GIVEN+="omz_update " ;;
+    --iterm2) OPT_ITERM2="yes" ;;
+    --no-iterm2) OPT_ITERM2="no" ;;
+    --iterm2-profile) OPT_ITERM2_PROFILE="yes" ;;
+    --no-iterm2-profile) OPT_ITERM2_PROFILE="no" ;;
     -y|--yes) OPT_YES=1 ;;
     -h|--help) usage; exit 0 ;;
     *) printf '未知選項：%s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -191,6 +217,30 @@ has_command() { command -v "$1" >/dev/null 2>&1; }
 # 照樣存在，-r / -w 也會過，但真的開下去會噴 "No such device or address"。
 # 所以要實際開一次才算數。
 have_tty() { { true < /dev/tty; } >/dev/null 2>&1; }
+
+# 問一個 y/N 問題，答 y 才回 0。
+# 只有在有 tty、而且沒有 -y 的時候才真的問；其他情況一律當成「不要」，
+# 這樣 curl | bash 從 ssh 跑的時候不會卡住等輸入。
+ask_yn() {
+  [ "$OPT_YES" -eq 1 ] && return 1
+  have_tty || return 1
+  local ans=""
+  printf '%s' "$1" > /dev/tty
+  read -r ans < /dev/tty || true
+  case "$ans" in y|Y|yes|YES) return 0 ;; esac
+  return 1
+}
+
+# 目前使用者的 login shell。macOS 沒有 getent，要問 Directory Service。
+login_shell_of_current_user() {
+  local s=""
+  if has_command getent; then
+    s="$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')" || s=""
+  elif has_command dscl; then
+    s="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')" || s=""
+  fi
+  printf '%s\n' "${s:-${SHELL:-unknown}}"
+}
 
 # ---------------------------------------------------------------------------
 # 前置檢查
@@ -604,6 +654,11 @@ save_options() {
 
 DET_OS_ID=""
 DET_OS_PRETTY=""
+DET_ARCH=""
+DET_IS_MACOS=0
+DET_MACOS_VERSION=""
+DET_MACOS_MAJOR=0
+DET_MAC_CLT=0
 DET_PKG_MGR=""
 DET_PKG_INSTALL=""
 DET_SUDO=""
@@ -634,6 +689,19 @@ DET_NEED_HOOK=0
 DET_CHSH_METHOD=""
 
 detect_os() {
+  DET_ARCH="$(uname -m)"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    DET_IS_MACOS=1
+    DET_OS_ID="macos"
+    DET_MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null || echo unknown)"
+    DET_MACOS_MAJOR="${DET_MACOS_VERSION%%.*}"
+    case "$DET_MACOS_MAJOR" in ''|*[!0-9]*) DET_MACOS_MAJOR=0 ;; esac
+    DET_OS_PRETTY="macOS $DET_MACOS_VERSION ($DET_ARCH)"
+    # 沒裝 Command Line Tools 時 /usr/bin/git 還是在，但一執行就跳安裝視窗，
+    # 所以不能只看 command -v git。
+    if xcode-select -p >/dev/null 2>&1; then DET_MAC_CLT=1; else DET_MAC_CLT=0; fi
+    return 0
+  fi
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -665,6 +733,11 @@ detect_pkg_mgr() {
 }
 
 detect_sudo() {
+  # macOS 上一律不用 sudo，連 sudo -n 探測都不跑：公司筆電的稽核會記到每一次嘗試。
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    DET_SUDO="no"
+    return 0
+  fi
   if ! has_command sudo; then
     DET_SUDO="no"
     return 0
@@ -759,6 +832,11 @@ detect_desktop() {
   DET_HAS_DESKTOP=0
   DET_DESKTOP_EVIDENCE=""
   local d sessions
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    # Mac 一定有桌面，字型裝在這台上，坐在前面的人就用得到。
+    DET_HAS_DESKTOP=1
+    DET_DESKTOP_EVIDENCE="macOS"
+  fi
   for d in /usr/share/xsessions /usr/share/wayland-sessions; do
     [ -d "$d" ] || continue
     # 目錄空的不算，有些套件會留下空目錄
@@ -766,7 +844,7 @@ detect_desktop() {
                 sed 's|.*/||; s|\.desktop$||' | tr '\n' ' ')"
     [ -n "$sessions" ] || continue
     DET_HAS_DESKTOP=1
-    DET_DESKTOP_EVIDENCE="${DET_DESKTOP_EVIDENCE:+$DET_DESKTOP_EVIDENCE、}${sessions% }"
+    DET_DESKTOP_EVIDENCE="${DET_DESKTOP_EVIDENCE:+${DET_DESKTOP_EVIDENCE}、}${sessions% }"
   done
   if [ -e /etc/systemd/system/display-manager.service ]; then
     DET_HAS_DESKTOP=1
@@ -870,7 +948,7 @@ detect_residue() {
   DET_RESIDUE=()
   # v2 在明明有系統 zsh 的機器上多編出來的 ~/.local/bin/zsh
   if [ -x "$LOCAL_BIN/zsh" ] && [ "$DET_ZSH_SOURCE" = "system" ]; then
-    DET_RESIDUE+=("$LOCAL_BIN/zsh （系統已有 $DET_ZSH_PATH，這份自編的是多餘的）")
+    DET_RESIDUE+=("$LOCAL_BIN/zsh （系統已有 ${DET_ZSH_PATH}，這份自編的是多餘的）")
   fi
   # v2 的舊 hook
   if file_has "$HOME/.bash_profile" "BEGIN USER LOCAL ZSH AUTO START"; then
@@ -879,13 +957,12 @@ detect_residue() {
   # 舊格式的散裝備份。刻意不清：那是使用者手上唯一的還原素材。
   local n
   n="$(find "$HOME" -maxdepth 1 -name '.zshrc.backup.*' -o -maxdepth 1 -name '.zshenv.backup.*' 2>/dev/null | wc -l)"
-  [ "$n" -gt 0 ] && DET_RESIDUE+=("$n 份散在家目錄的舊格式備份（新的備份改放 $BACKUP_ROOT）")
+  [ "$n" -gt 0 ] && DET_RESIDUE+=("${n} 份散在家目錄的舊格式備份（新的備份改放 ${BACKUP_ROOT}）")
   return 0
 }
 
 detect_shell_change() {
-  DET_LOGIN_SHELL="$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
-  [ -z "$DET_LOGIN_SHELL" ] && DET_LOGIN_SHELL="${SHELL:-unknown}"
+  DET_LOGIN_SHELL="$(login_shell_of_current_user)"
 
   case "$DET_LOGIN_SHELL" in
     *zsh) DET_NEED_CHSH=0 ;;
@@ -907,7 +984,7 @@ detect_shell_change() {
       DET_CHSH_METHOD="hook:$DET_ZSH_PATH 不在 /etc/shells 裡"
     elif have_tty; then
       DET_CHSH_METHOD="chsh:會當場問你密碼"
-    elif [ "$DET_SUDO" = "passwordless" ]; then
+    elif [ "$DET_IS_MACOS" -eq 0 ] && [ "$DET_SUDO" = "passwordless" ]; then
       DET_CHSH_METHOD="sudo:免密碼 sudo"
     else
       DET_CHSH_METHOD="hook:沒有 tty 可以輸入密碼，sudo 也要密碼"
@@ -931,6 +1008,7 @@ run_detection() {
   detect_whitelist
   detect_residue
   detect_shell_change
+  detect_iterm2
 }
 
 # ---------------------------------------------------------------------------
@@ -954,6 +1032,47 @@ check_supported() {
   exit 1
 }
 
+# macOS 沒有 Command Line Tools 就沒有能用的 git。
+# 有 tty 就問要不要叫出 Apple 的安裝視窗、等它裝好；沒有 tty 就說明後結束。
+# 一定要在動任何檔案之前跑（--dry-run 也跑，好讓報告講實話）。
+MAC_CLT_WAIT_MAX=1800
+MAC_CLT_POLL=5
+macos_require_clt() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ "$DET_MAC_CLT" -eq 1 ] && return 0
+
+  warn "這台 Mac 沒有 Command Line Tools，git 不能用（/usr/bin/git 一執行就會跳安裝視窗）。"
+  # --dry-run 承諾不改東西，裝系統元件更不行：說明之後照樣印報告。
+  if [ "$OPT_DRY_RUN" -eq 1 ]; then
+    warn "真的安裝之前要先跑：xcode-select --install（不帶 --dry-run 而且有 tty 時，腳本會問你要不要幫忙叫出安裝視窗）"
+    return 0
+  fi
+  if ask_yn "這台沒有 Command Line Tools（git 需要它），要幫你叫出安裝視窗嗎？[y/N] "; then
+    local xs_err
+    if ! xs_err="$(xcode-select --install 2>&1)"; then
+      err "叫不出 Command Line Tools 的安裝視窗：${xs_err:-（xcode-select 沒有說原因）}"
+      err "可能是被公司的管理工具擋掉了，或這台 Mac 現在沒有人登入桌面。"
+      err "請在這台 Mac 的桌面上自己跑：xcode-select --install，裝好再重跑一次這支腳本。這次什麼都沒改。"
+      exit 1
+    fi
+    info "請在跳出來的視窗按「安裝」。裝好之後這裡會自動繼續（最多等 30 分鐘，Ctrl-C 可以中斷）。"
+    local waited=0
+    while ! xcode-select -p >/dev/null 2>&1; do
+      [ "$waited" -ge "$MAC_CLT_WAIT_MAX" ] && \
+        die "等了 30 分鐘還沒裝好。裝好之後再重跑一次這支腳本。"
+      sleep "$MAC_CLT_POLL"
+      waited=$((waited + MAC_CLT_POLL))
+    done
+    DET_MAC_CLT=1
+    ok "Command Line Tools 裝好了"
+    return 0
+  fi
+
+  err "請先在這台 Mac 上跑：xcode-select --install"
+  err "裝好之後再重跑一次這支腳本。這次什麼都沒改。"
+  exit 1
+}
+
 # ---------------------------------------------------------------------------
 # 事前報告
 # ---------------------------------------------------------------------------
@@ -974,8 +1093,17 @@ print_report() {
   printf '%s============================================================%s\n' "$C_BOLD" "$C_RESET"
   printf '\n'
   printf '  系統            %s\n' "$DET_OS_PRETTY"
-  printf '  套件管理器      %s\n' "$DET_PKG_MGR"
-  printf '  sudo            %s\n' "$DET_SUDO"
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    printf '  套件管理器      不需要（只用 macOS 內建的 zsh、git、curl，不裝 Homebrew）\n'
+    if [ "$DET_MAC_CLT" -eq 1 ]; then
+      printf '  Command Line Tools  有（git 可以用）\n'
+    else
+      printf '  Command Line Tools  %s沒有：真的安裝前要先跑 xcode-select --install%s\n' "$C_YEL" "$C_RESET"
+    fi
+  else
+    printf '  套件管理器      %s\n' "$DET_PKG_MGR"
+    printf '  sudo            %s\n' "$DET_SUDO"
+  fi
   printf '  zsh             %s  [%s]\n' "$DET_ZSH_PATH" "$DET_ZSH_SOURCE"
   printf '  login shell     %s\n' "$DET_LOGIN_SHELL"
   if [ "$DET_HAS_DESKTOP" -eq 1 ]; then
@@ -985,7 +1113,7 @@ print_report() {
       printf '                  %s要看到圖示，你手邊的終端機也要裝一份。%s\n' "$C_DIM" "$C_RESET"
     fi
   else
-    printf '  桌面環境        沒有（不看 $DISPLAY，因為 X11 forwarding 會讓它騙人）\n'
+    printf '  桌面環境        沒有（不看 $DISPLAY 變數，因為 X11 forwarding 會讓它騙人）\n'
   fi
   printf '  .zshrc 模式     %s\n' "$mode_desc"
   if [ "${#SAVED_OPTS_APPLIED[@]}" -gt 0 ]; then
@@ -1041,9 +1169,13 @@ print_report() {
   if [ "$OPT_NO_FONTS" -eq 1 ]; then
     printf '  MesloLGS NF 字型        跳過（--no-fonts）\n'
   elif [ "$DET_HAS_DESKTOP" -eq 1 ]; then
-    printf '  MesloLGS NF 字型        將安裝到 ~/.local/share/fonts（這台有桌面）\n'
+    printf '  MesloLGS NF 字型        將安裝到 %s（這台有桌面；已經有的檔案不重下載）\n' "~${LOCAL_FONTS#"$HOME"}"
   else
     printf '  MesloLGS NF 字型        跳過（這台沒有桌面，裝了也畫不出來）\n'
+  fi
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    printf '  iTerm2                  %s\n' "$(iterm2_install_plan)"
+    printf '  iTerm2 profile          %s\n' "$(iterm2_profile_plan)"
   fi
   [ "$OPT_UPDATE" -eq 1 ] && printf '  %s已安裝的元件            會 git pull 更新（--update）%s\n' "$C_YEL" "$C_RESET"
   printf '\n'
@@ -1138,7 +1270,7 @@ print_report() {
     if [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] && \
        grep -q "zstyle ':omz:update' mode disabled" "$ZSHRC" 2>/dev/null && \
        [ "$OPT_OMZ_UPDATE" != "disabled" ]; then
-      changes+=("oh-my-zsh 的更新提示：disabled → $OPT_OMZ_UPDATE（要維持原樣請加 --omz-update disabled）")
+      changes+=("oh-my-zsh 的更新提示：disabled → ${OPT_OMZ_UPDATE}（要維持原樣請加 --omz-update disabled）")
     fi
     if grep -q '^typeset -U path PATH$' "$ZSHRC" 2>/dev/null; then
       changes+=("head 區段不再重複 .zshenv 已有的 typeset -U 與 PATH 那一行")
@@ -1166,7 +1298,12 @@ print_report() {
     printf '  這種寫法沒有互動性判斷、沒有 tty 檢查、也沒有逃生開關，而且 .profile 連 sh 都會讀。\n'
     printf '  它會蓋掉本腳本設定的 login shell，你看到的環境跟報告講的會對不起來。\n'
     printf '  本腳本不動它：那不是舊版寫的，是手寫的。要拿掉請自己來：\n'
-    printf "    %ssed -i 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    if [ "$DET_IS_MACOS" -eq 1 ]; then
+      # BSD sed 的 -i 一定要接一個（可以是空的）副檔名參數。
+      printf "    %ssed -i '' 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    else
+      printf "    %ssed -i 's|^exec .*zsh|# &|' ~/.profile%s\n" "$C_BOLD" "$C_RESET"
+    fi
     printf '\n'
   fi
 
@@ -1220,12 +1357,29 @@ fetch_verified() {
   shift 2
   for url in "$@"; do
     download_to "$out" "$url" || continue
-    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 $out。"; }
+    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; }
     [ "$got" = "$sha" ] && return 0
     rm -f "$out"
-    die "$out 的 sha256 對不上（預期 $sha，實際 $got）。不編譯來路不明的原始碼。"
+    die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不編譯來路不明的原始碼。"
   done
   die "下載失敗：$out"
+}
+
+# 跟 fetch_verified 一樣核對 sha256，但失敗時只警告並回 1，不結束整支腳本。
+# 給「裝不成也沒關係」的東西用（例如 iTerm2）。
+fetch_verified_soft() {
+  local out="$1" sha="$2" url got
+  shift 2
+  for url in "$@"; do
+    download_to "$out" "$url" || continue
+    got="$(file_sha256 "$out")" || { rm -f "$out"; warn "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; return 1; }
+    [ "$got" = "$sha" ] && return 0
+    rm -f "$out"
+    warn "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不安裝來路不明的檔案。"
+    return 1
+  done
+  warn "下載失敗：$*"
+  return 1
 }
 
 download_if_missing() {
@@ -1275,7 +1429,7 @@ install_missing_packages() {
 }
 
 build_zsh_locally() {
-  info "沒有系統 zsh 也裝不了，改為自行編譯到 $LOCAL_PREFIX。"
+  info "沒有系統 zsh 也裝不了，改為自行編譯到 ${LOCAL_PREFIX}。"
 
   local tool missing=()
   for tool in gcc make tar; do has_command "$tool" || missing+=("$tool"); done
@@ -1421,12 +1575,190 @@ install_fonts() {
     download_if_missing "$LOCAL_FONTS/MesloLGS NF ${name}.ttf" \
       "$base/MesloLGS%20NF%20${style}.ttf" || warn "字型下載失敗：$name"
   done
+  [ "$DET_IS_MACOS" -eq 1 ] && return 0
   has_command fc-cache && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
 # 白名單片段
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# macOS：iTerm2
+# ---------------------------------------------------------------------------
+
+# iTerm2 的 Dynamic Profile：放進這個資料夾就會多出一個 profile，原本的 profile 一個字都不動，
+# 刪掉這個檔案就還原。官方文件：https://iterm2.com/documentation-dynamic-profiles.html
+ITERM2_PROFILE_FILE="$HOME/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json"
+ITERM2_PROFILE_NAME="zsh-p10k (MesloLGS NF)"
+ITERM2_PROFILE_FONT="MesloLGS-NF-Regular 13"
+# 寫死的 Guid：重跑時 iTerm2 才認得出是同一個 profile。
+ITERM2_PROFILE_GUID="c913bbe7-4655-4f80-9afb-4423668029d6"
+
+DET_ITERM2_APP=""
+ITERM2_INSTALL_DO=0
+ITERM2_PROFILE_DO=0
+
+# 印出找到的 iTerm.app 路徑。ZSH_P10K_APPS_DIR 只給測試用：有設就只看那裡。
+find_iterm2_app() {
+  local d
+  if [ -n "${ZSH_P10K_APPS_DIR:-}" ]; then
+    [ -d "$ZSH_P10K_APPS_DIR/iTerm.app" ] && { printf '%s\n' "$ZSH_P10K_APPS_DIR/iTerm.app"; return 0; }
+    return 1
+  fi
+  for d in /Applications "$HOME/Applications"; do
+    [ -d "$d/iTerm.app" ] && { printf '%s\n' "$d/iTerm.app"; return 0; }
+  done
+  return 1
+}
+
+detect_iterm2() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  DET_ITERM2_APP="$(find_iterm2_app)" || DET_ITERM2_APP=""
+  return 0
+}
+
+# iTerm2 要裝到哪裡。ZSH_P10K_APPS_DIR 只給測試用。
+# /Applications 在 admin 群組可寫，不需要 sudo；不可寫就退到 ~/Applications。
+iterm2_dest_dir() {
+  if [ -n "${ZSH_P10K_APPS_DIR:-}" ]; then
+    printf '%s\n' "$ZSH_P10K_APPS_DIR"
+  elif [ -w /Applications ]; then
+    printf '/Applications\n'
+  else
+    printf '%s/Applications\n' "$HOME"
+  fi
+}
+
+iterm2_supported_here() { [ "$DET_IS_MACOS" -eq 1 ] && [ "$DET_MACOS_MAJOR" -ge "$ITERM2_MIN_MACOS" ]; }
+
+# 這次「有可能」會裝 iTerm2（明講要裝，或等一下問得到人）。
+iterm2_may_install() {
+  [ -z "$DET_ITERM2_APP" ] && iterm2_supported_here || return 1
+  case "$OPT_ITERM2" in
+    yes) return 0 ;;
+    no)  return 1 ;;
+    *)   [ "$OPT_YES" -eq 0 ] && have_tty ;;
+  esac
+}
+
+# 事前報告裡 iTerm2 那一行要講的狀態。
+iterm2_install_plan() {
+  if [ -n "$DET_ITERM2_APP" ]; then
+    printf '已安裝（%s），不動' "$DET_ITERM2_APP"
+  elif ! iterm2_supported_here; then
+    printf '沒有安裝；iTerm2 %s 需要 macOS %s 以上，不提供安裝' "$ITERM2_VERSION" "$ITERM2_MIN_MACOS"
+  else
+    case "$OPT_ITERM2" in
+      yes) printf '會安裝 %s 到 %s（--iterm2，會核對 sha256）' "$ITERM2_VERSION" "$(iterm2_dest_dir)" ;;
+      no)  printf '沒有安裝，不裝（--no-iterm2）' ;;
+      *)   if [ "$OPT_YES" -eq 0 ] && have_tty; then
+             printf '沒有安裝，等一下會問你要不要裝'
+           else
+             printf '沒有安裝；沒有 tty 可以問你，要裝請加 --iterm2'
+           fi ;;
+    esac
+  fi
+}
+
+iterm2_install_choose() {
+  ITERM2_INSTALL_DO=0
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ -z "$DET_ITERM2_APP" ] || return 0
+  if ! iterm2_supported_here; then
+    if [ "$OPT_ITERM2" = "yes" ]; then
+      warn "iTerm2 ${ITERM2_VERSION} 需要 macOS ${ITERM2_MIN_MACOS} 以上，這台是 ${DET_MACOS_VERSION}，不裝。"
+    fi
+    return 0
+  fi
+  case "$OPT_ITERM2" in
+    yes) ITERM2_INSTALL_DO=1 ;;
+    no)  ;;
+    *)   if ask_yn "沒偵測到 iTerm2，要幫你裝嗎？（官方 ${ITERM2_VERSION}，會核對 sha256）[y/N] "; then
+           ITERM2_INSTALL_DO=1
+         fi ;;
+  esac
+  return 0
+}
+
+# 下載官方 zip → 核對 sha256 → 解壓 → 檢查簽章 → 搬到 Applications。
+# 任何一步失敗都只警告、清掉暫存檔，其他部分照常繼續。
+install_iterm2() {
+  [ "$ITERM2_INSTALL_DO" -eq 1 ] || return 0
+  local dest tmp sha
+  dest="$(iterm2_dest_dir)"
+  sha="${ZSH_P10K_ITERM2_SHA256_OVERRIDE:-$ITERM2_SHA256}"
+  tmp="$(mktemp -d)"
+  info "下載 iTerm2 ${ITERM2_VERSION}（約 65 MB）"
+  if ! fetch_verified_soft "$tmp/iTerm2.zip" "$sha" "$ITERM2_URL"; then
+    rm -rf "$tmp"; warn "iTerm2 沒有裝，其他部分照常繼續。"; return 0
+  fi
+  if ! ditto -x -k "$tmp/iTerm2.zip" "$tmp/x" || [ ! -d "$tmp/x/iTerm.app" ]; then
+    rm -rf "$tmp"; warn "iTerm2 解壓失敗，沒有裝。"; return 0
+  fi
+  if ! codesign --verify --deep --strict "$tmp/x/iTerm.app" 2>/dev/null; then
+    rm -rf "$tmp"; warn "iTerm2 的簽章檢查沒過，沒有裝。"; return 0
+  fi
+  if ! { mkdir -p "$dest" && mv "$tmp/x/iTerm.app" "$dest/"; }; then
+    rm -rf "$tmp"; warn "沒辦法把 iTerm.app 放進 ${dest}，沒有裝。"; return 0
+  fi
+  rm -rf "$tmp"
+  DET_ITERM2_APP="$dest/iTerm.app"
+  ok "iTerm2 ${ITERM2_VERSION} 裝好了：$DET_ITERM2_APP"
+}
+
+# 事前報告裡 iTerm2 profile 那一行要講的狀態。
+iterm2_profile_plan() {
+  if [ -f "$ITERM2_PROFILE_FILE" ]; then
+    printf '%s 已存在，不動' "~${ITERM2_PROFILE_FILE#"$HOME"}"
+  elif [ -z "$DET_ITERM2_APP" ] && ! iterm2_may_install; then
+    printf '不建立（沒有 iTerm2）'
+  else
+    case "$OPT_ITERM2_PROFILE" in
+      yes) printf '會建立 %s（--iterm2-profile）' "$ITERM2_PROFILE_NAME" ;;
+      no)  printf '不建立（--no-iterm2-profile）' ;;
+      *)   if [ "$OPT_YES" -eq 0 ] && have_tty; then
+             printf '等一下會問你'
+           else
+             printf '不建立（沒有 tty 可以問你；要建立請加 --iterm2-profile）'
+           fi ;;
+    esac
+  fi
+}
+
+# 動手之前把 iTerm2 profile 那題問完。
+iterm2_profile_choose() {
+  ITERM2_PROFILE_DO=0
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  [ -f "$ITERM2_PROFILE_FILE" ] && return 0
+  [ -n "$DET_ITERM2_APP" ] || [ "$ITERM2_INSTALL_DO" -eq 1 ] || return 0
+  case "$OPT_ITERM2_PROFILE" in
+    yes) ITERM2_PROFILE_DO=1 ;;
+    no)  ;;
+    *)   if ask_yn "要幫你在 iTerm2 加一個用 MesloLGS NF 字型的 profile 嗎？（不會動你原本的 profile）[y/N] "; then
+           ITERM2_PROFILE_DO=1
+         fi ;;
+  esac
+  return 0
+}
+
+install_iterm2_profile() {
+  [ "$DET_IS_MACOS" -eq 1 ] || return 0
+  if [ -f "$ITERM2_PROFILE_FILE" ]; then
+    info "~${ITERM2_PROFILE_FILE#"$HOME"} 已存在，不覆蓋。"
+    return 0
+  fi
+  [ "$ITERM2_PROFILE_DO" -eq 1 ] || return 0
+  if [ -z "$(find_iterm2_app)" ]; then
+    warn "找不到 iTerm2，略過 iTerm2 profile。"
+    return 0
+  fi
+  mkdir -p "$(dirname "$ITERM2_PROFILE_FILE")"
+  printf '{"Profiles":[{"Name":"%s","Guid":"%s","Normal Font":"%s"}]}\n' \
+    "$ITERM2_PROFILE_NAME" "$ITERM2_PROFILE_GUID" "$ITERM2_PROFILE_FONT" > "$ITERM2_PROFILE_FILE"
+  ok "已在 iTerm2 加了 profile「${ITERM2_PROFILE_NAME}」"
+  info "要讓新視窗都用它：iTerm2 → Settings → Profiles，選 ${ITERM2_PROFILE_NAME}，按 Other Actions → Set as Default"
+}
 
 whitelist_snippet() {
   local tool="$1"
@@ -1734,7 +2066,7 @@ write_zshrc() {
   backup_file "$ZSHRC"
   install_over "$new" "$ZSHRC"
   rm -f "$tmp"
-  ok "~/.zshrc 已更新（模式：$DET_ZSHRC_MODE）"
+  ok "~/.zshrc 已更新（模式：${DET_ZSHRC_MODE}）"
 }
 
 # ---------------------------------------------------------------------------
@@ -1869,8 +2201,9 @@ change_login_shell() {
       return 0
     fi
   fi
-  if sudo_run chsh -s "$target" "$(id -un)" >/dev/null 2>&1; then
-    ok "login shell 已改成 $target（透過 sudo）"
+  # macOS 上一律不用 sudo。
+  if [ "$DET_IS_MACOS" -eq 0 ] && sudo_run chsh -s "$target" "$(id -un)" >/dev/null 2>&1; then
+    ok "login shell 已改成 ${target}（透過 sudo）"
     return 0
   fi
 
@@ -1919,7 +2252,7 @@ if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
 fi
 $HOOK_END
 EOF
-  ok "已寫入 ~/.bash_profile hook（指向 $target）"
+  ok "已寫入 ~/.bash_profile hook（指向 ${target}）"
 }
 
 remove_hook() {
@@ -2070,10 +2403,16 @@ do_uninstall() {
   printf '    （裡面可能有你自己放的 custom plugin / theme，所以不代為刪除）\n'
   printf '  ~/.p10k.zsh           rm -f ~/.p10k.zsh\n'
   printf '  ~/.zshrc.local        rm -f ~/.zshrc.local\n'
-  printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    # ~/Library/Fonts 裡還有使用者自己的字型，絕對不能整個目錄刪掉。
+    printf '  字型                  rm -f ~/Library/Fonts/MesloLGS\\ NF\\ *.ttf\n'
+    printf '  iTerm2 profile        rm -f ~/Library/Application\\ Support/iTerm2/DynamicProfiles/zsh-p10k.json\n'
+  else
+    printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
+  fi
   printf '  自編的 zsh            rm -rf %s/zsh %s/zsh*\n' "$LOCAL_BIN" "$LOCAL_SRC"
   printf '\n'
-  printf '  login shell 目前是 %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
+  printf '  login shell 目前是 %s\n' "$(login_shell_of_current_user)"
   printf '  要改回 bash：chsh -s /bin/bash\n\n'
 }
 
@@ -2082,6 +2421,17 @@ do_uninstall() {
 # ---------------------------------------------------------------------------
 
 print_font_guide() {
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    cat <<EOF
+
+${C_BOLD}字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF${C_RESET}
+
+    iTerm2        Settings → Profiles → Text → Font
+    Terminal.app  設定 → 描述檔 → 文字 → 字體 → 更改
+    VS Code       settings.json 加 "terminal.integrated.fontFamily": "MesloLGS NF"
+EOF
+    return 0
+  fi
   cat <<EOF
 
 ${C_BOLD}字型：這一步要在「你手邊的終端機」上做，不是在這台機器上${C_RESET}
@@ -2111,7 +2461,7 @@ print_summary() {
   printf '\n'
   printf '  zsh            %s\n' "$DET_ZSH_PATH"
   printf '  模式           %s\n' "$DET_ZSHRC_MODE"
-  printf '  login shell    %s\n' "$(getent passwd "$(id -un)" 2>/dev/null | awk -F: '{print $7}')"
+  printf '  login shell    %s\n' "$(login_shell_of_current_user)"
   printf '\n'
   printf '%s下一步%s\n' "$C_BOLD" "$C_RESET"
   printf '  1. 開一個新的終端機視窗（或重新 ssh 進來）\n'
@@ -2147,6 +2497,7 @@ main() {
   run_detection
   infer_guard_from_block
   check_supported
+  macos_require_clt
   print_report
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
@@ -2154,6 +2505,9 @@ main() {
     exit 0
   fi
 
+  # 所有選擇題都在動手之前問完。
+  iterm2_install_choose
+  iterm2_profile_choose
   confirm_or_exit
 
   ensure_zsh
@@ -2162,6 +2516,8 @@ main() {
   install_theme_and_plugins
   install_p10k_template
   install_fonts
+  install_iterm2
+  install_iterm2_profile
 
   run_conda_init
   gen_zshrc_local

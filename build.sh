@@ -44,6 +44,20 @@ if ! awk_posix_class_check "$SRC"; then
 fi
 echo "awk 相容性  OK（沒有 POSIX 字元類別）"
 
+# `$變數` 後面不准直接接非 ASCII 字元。
+#
+# macOS 內建的 bash 3.2 在 C locale 下（ssh 進去時很常見）會把全形字的位元組
+# 當成變數名稱的一部分：`$MODE（` 變成在找一個叫 `MODE\xef\xbc` 的變數，
+# 加上 set -u 就整支腳本掛掉。Linux 的 bash 5 不會，所以只在 Mac 上才看得到。
+# 要寫成 `${MODE}（`。註解行不算。
+# LC_ALL=C：一個位元組一個位元組比，範圍 [ -~] 也不會被 locale 的排序規則影響。
+if LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SRC" | LC_ALL=C grep -vE '^[0-9]+:[[:space:]]*#' >&2; then
+  echo "" >&2
+  echo "上面這幾行的 \$變數 後面直接接了非 ASCII 字元，bash 3.2 會讀錯，改寫成 \${變數}。" >&2
+  exit 1
+fi
+echo "bash 3.2 變數邊界  OK"
+
 payload="$(gzip -9nc "$TEMPLATE" | base64 -w0)"
 
 mkdir -p "$(dirname "$OUT")"

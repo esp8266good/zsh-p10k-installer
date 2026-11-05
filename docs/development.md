@@ -17,7 +17,7 @@
 git tag v3.2.0 && git push origin main v3.2.0
 ```
 
-CI 會 build、跑 shellcheck 與全部 fixture，都過了才建立 Release，附上腳本與 `SHA256SUMS`。
+CI 會 build、跑 shellcheck、全部 fixture 與兩種 macOS runner 的 smoke test，都過了才建立 Release，附上腳本與 `SHA256SUMS`。
 tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 
 ## fixture
@@ -43,8 +43,29 @@ tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 「regex 不報錯、就是永遠不成立」的狀況，在 gawk 或 mawk 1.3.4 上怎麼測都會過。
 所以 `build.sh` 另外會掃腳本裡所有 awk 程式，出現 `[[:` 就讓 build 失敗。
 
+## macOS
+
+fixture 是 Linux 容器，測不到 macOS。macOS 另外用 `tests/macos-smoke.sh`，要在 Mac 上跑：
+
+```bash
+./build.sh
+scp dist/install-zsh-p10k.sh tests/macos-smoke.sh mac:/tmp/   # 或在 Mac 上 clone 之後直接跑
+ssh mac 'mkdir -p /tmp/s/dist /tmp/s/tests && mv /tmp/install-zsh-p10k.sh /tmp/s/dist/ && mv /tmp/macos-smoke.sh /tmp/s/tests/ && bash /tmp/s/tests/macos-smoke.sh'
+```
+
+每個情境都用 `mktemp -d` 當 `HOME`，iTerm2 也裝到暫存目錄（`ZSH_P10K_APPS_DIR`），不碰真的 home 和 `/Applications`。
+CI 在 `macos-15`（Apple silicon）和 `macos-15-intel` 上各跑一次。
+「沒有 Command Line Tools」的情境用一個假的 `xcode-select`（`FAKE_NO_CLT=1` 時 `-p` 回失敗）模擬，
+所以裝了 Xcode 的 runner 也測得到；測試也會放一個假的 `sudo`，確認 macOS 上一次都沒被叫到。
+
+有 tty 的情境用 `expect` 送答案，不用 `printf ... | script`：macOS 的 `script` 讀到 stdin 的 EOF 會送出 `^D`，
+而且比前面的輸入還早被處理，`read` 會讀到空字串。
+`expect` 的比對字串只能用 ASCII（`[y/N] `、`Ctrl-C`）：macOS 內建的 expect 5.45 遇到中文比對字串會 segfault。
+
 ## 寫法規則
 
 - awk 程式裡不能用 POSIX 字元類別，空白寫 `[ \t]`；`grep -E` 要比對空白用腳本裡的 `$SP`。
+- `$變數` 後面不能直接接中文或全形標點，要寫成 `${變數}`。macOS 內建的 bash 3.2 在 C locale 下會把全形字的位元組當成變數名稱的一部分，加上 `set -u` 就整支腳本掛掉。`build.sh` 會擋。
+- 要能在 bash 3.2 下跑：不用 `mapfile`、關聯陣列、`${x,,}`；可能是空的陣列寫成 `${arr[@]+"${arr[@]}"}`，或先檢查 `${#arr[@]}`。
 - 使用者看得到的訊息與註解都用全形中文標點，不用破折號。
 - 設計決定寫在 `docs/adr/`，名詞定義寫在 `CONTEXT.md`。
