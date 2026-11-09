@@ -281,6 +281,32 @@ EOF
       seed_extra_bashrc
       EXTRA_ARGS="--omz-update reminder --no-chsh"
       ;;
+    font-fail)
+      # 字型的網址一律失敗，重試用完之後結尾要講實話。
+      sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
+      seed_desktop
+      seed_extra_bashrc
+      mkdir -p /tmp/failcurl
+      cat > /tmp/failcurl/curl <<'EOF'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    http*MesloLGS*) echo "curl: (56) simulated failure" >&2; exit 56 ;;
+  esac
+done
+exec /usr/bin/curl "$@"
+EOF
+      chmod +x /tmp/failcurl/curl
+      export PATH="/tmp/failcurl:$PATH"
+      ;;
+    external-p10k)
+      # p10k 由 oh-my-zsh 以外的地方載入：不 clone 第二份，oh-my-zsh 也不能去找主題。
+      sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
+      mkdir -p "$HOME/brew"
+      printf 'typeset -g EXTERNAL_P10K=1\n' > "$HOME/brew/powerlevel10k.zsh-theme"
+      printf '# existing zshrc\nsource "$HOME/brew/powerlevel10k.zsh-theme"\n%s\n' "$SENTINEL" > "$HOME/.zshrc"
+      seed_extra_bashrc
+      ;;
     ancient-awk)
       # 這個 fixture 只在 debian:buster 映像上跑，那裡的 awk 是 mawk 1.3.3。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
@@ -403,6 +429,19 @@ case "$FIXTURE" in
   has-desktop)
     check "判定為有桌面"                'grep -q "桌面環境        這台有" /tmp/run1.log'
     check "字型有安裝"                  '[ -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
+    ;;
+  font-fail)
+    check "安裝照樣完成"                '[ "$RC1" -eq 0 ]'
+    check "沒有裝到字型檔"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.ttf" 2>/dev/null | head -1)" ]'
+    check "結尾講 4 個字型沒裝到"       'grep -q "4 個字型沒裝到" /tmp/run1.log'
+    check "沒有留下 .part"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.part" 2>/dev/null | head -1)" ]'
+    ;;
+  external-p10k)
+    check "報告說不另外 clone"          'grep -q "不另外 clone" /tmp/run1.log'
+    check "沒有多 clone 一份 p10k"      '[ ! -e "$HOME/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+    check "oh-my-zsh 不去找主題"        'grep -q "^ZSH_THEME=\"\"$" "$HOME/.zshrc"'
+    check "oh-my-zsh 沒抱怨找不到主題"  '! "$ZSH_BIN" -i -c exit 2>&1 | grep -q "not found"'
+    check "外部的 p10k 真的有載入"      '[ "$("$ZSH_BIN" -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
     ;;
   forwarded-display)
     # DISPLAY 有值但機器沒有桌面。舊版就是在這裡把一台工作站判成「有圖形介面」的

@@ -56,6 +56,8 @@ jobs:
           - ancient-awk
           - dotfiles-symlink
           - sticky-options
+          - font-fail
+          - external-p10k
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

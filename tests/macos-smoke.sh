@@ -300,6 +300,105 @@ EOF
   check "有說在重試" 'out_has "重試"'
 }
 
+# 做一支假的 curl：網址符合 pattern 的一律失敗，其他照常。印出放它的目錄。
+failing_font_curl() {
+  local d; d="$(mktemp -d "$WORK/failcurl.XXXXXX")"
+  cat > "$d/curl" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    http*$1*) echo "curl: (56) Failure when receiving data from the peer（假裝斷線）" >&2; exit 56 ;;
+  esac
+done
+exec /usr/bin/curl "\$@"
+EOF
+  chmod +x "$d/curl"
+  printf '%s' "$d"
+}
+
+# 重試用完還是失敗：結尾不能說字型裝好了，要講幾個沒裝到。
+t_font_all_fail() {
+  banner "font-all-fail"
+  local h d; h="$(new_home)"; d="$(failing_font_curl MesloLGS)"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0（字型失敗不讓整支腳本失敗）" '[ "$RC" -eq 0 ]'
+  check "一個字型都沒裝到" '[ "$(fonts_count "$h")" = 0 ]'
+  check "結尾講 4 個字型沒裝到" 'out_has "4 個字型沒裝到"'
+  check "結尾沒有說字型已經裝好" '! out_has "已經裝在這台 Mac"'
+}
+
+# 只有一個失敗：數字要對，而且照提示重跑一次真的會補上。
+t_font_partial_rerun() {
+  banner "font-partial-rerun"
+  local h d; h="$(new_home)"; d="$(failing_font_curl 'Bold%20Italic')"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "裝到三個" '[ "$(fonts_count "$h")" = 3 ]'
+  check "結尾講 1 個字型沒裝到" 'out_has "1 個字型沒裝到"'
+  run_notty "$h" --no-chsh
+  check "重跑 exit 0" '[ "$RC" -eq 0 ]'
+  check "重跑後四個都在" '[ "$(fonts_count "$h")" = 4 ]'
+  check "重跑後不再說沒裝到" '! out_has "個字型沒裝到"'
+  check "重跑後說字型已經裝好" 'out_has "已經裝在這台 Mac"'
+}
+
+# 寫一個假的 Homebrew p10k：被 source 時留下記號，才驗得到它真的有載入。
+seed_external_p10k() {
+  mkdir -p "$1/brew"
+  printf 'typeset -g EXTERNAL_P10K=1\n' > "$1/brew/powerlevel10k.zsh-theme"
+}
+
+# 已有 oh-my-zsh 設定、p10k 由 Homebrew 載入（附加模式）：不該再 clone 一份用不到的。
+t_brew_p10k_append() {
+  banner "brew-p10k-append"
+  local h; h="$(new_home)"; seed_external_p10k "$h"
+  cat > "$h/.zshrc" <<'EOF'
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git)
+source $ZSH/oh-my-zsh.sh
+source "$HOME/brew/powerlevel10k.zsh-theme"
+EOF
+  run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告是附加模式" 'out_has "附加模式"'
+  check "報告說不另外 clone" 'out_has "不另外 clone"'
+  check "沒有多 clone 一份 p10k" '[ ! -e "$h/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+  check "外部的 p10k 真的有載入" \
+    '[ "$(HOME="$h" TERM=xterm-256color zsh -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
+}
+
+# 沒有 oh-my-zsh、只有 source 外部 p10k（完整模式）：oh-my-zsh 不能再去找不存在的主題。
+t_brew_p10k_full() {
+  banner "brew-p10k-full"
+  local h err; h="$(new_home)"; seed_external_p10k "$h"
+  printf 'source "$HOME/brew/powerlevel10k.zsh-theme"\n' > "$h/.zshrc"
+  run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告是完整模式" 'out_has "完整模式"'
+  check "沒有多 clone 一份 p10k" '[ ! -e "$h/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+  err="$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)"
+  check "oh-my-zsh 沒抱怨找不到主題" '! printf "%s" "$err" | grep -q "not found"'
+  check "外部的 p10k 真的有載入" \
+    '[ "$(HOME="$h" TERM=xterm-256color zsh -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
+}
+
+# 這兩種看起來像外部載入，其實不是，p10k 還是要 clone。dry-run 看報告就夠了。
+t_brew_p10k_not_really() {
+  banner "brew-p10k-not-really"
+  local h; h="$(new_home)"
+  printf '# source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "註解掉的 source 不算" '! out_has "不另外 clone"'
+  h="$(new_home)"
+  cat > "$h/.zshrc" <<'EOF'
+ZSH_THEME="powerlevel10k/powerlevel10k"
+source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
+EOF
+  run_notty "$h" --dry-run
+  check "ZSH_THEME 還指著 clone 的路徑就要 clone" '! out_has "不另外 clone"'
+}
+
 t_uninstall_hint() {
   banner "uninstall-hint"
   local h; h="$(new_home)"
@@ -410,7 +509,8 @@ t_iterm2_notty() {
 }
 
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
-clean rerun existing-setup uninstall-hint font-retry
+clean rerun existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
+brew-p10k-append brew-p10k-full brew-p10k-not-really
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
 run_scenario() {
@@ -425,6 +525,11 @@ run_scenario() {
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;
     font-retry)     t_font_retry ;;
+    font-all-fail)  t_font_all_fail ;;
+    font-partial-rerun) t_font_partial_rerun ;;
+    brew-p10k-append) t_brew_p10k_append ;;
+    brew-p10k-full) t_brew_p10k_full ;;
+    brew-p10k-not-really) t_brew_p10k_not_really ;;
     profile-yes)    t_profile_yes ;;
     profile-keep)   t_profile_keep ;;
     profile-notty)  t_profile_notty ;;

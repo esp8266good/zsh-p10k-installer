@@ -667,6 +667,7 @@ DET_ZSH_SOURCE=""
 DET_ZSHRC_MODE=""
 DET_HAS_INSTANT_PROMPT=0
 DET_HAS_P10K_SOURCE=0
+DET_HAS_EXTERNAL_P10K=0
 DET_HAS_GUARD=0
 DET_HAS_BINDKEY=0
 DET_HAS_HIST_STAMPS=0
@@ -798,6 +799,17 @@ detect_missing_packages() {
   return 0
 }
 
+# p10k 是不是由 oh-my-zsh 以外的地方載入（例如 Homebrew 裝的）。
+# 註解掉的行不算；ZSH_THEME 還指著 clone 的路徑時也不算，那份 clone 是它要用的。
+# 這裡用 grep > /dev/null 不用 -q：-q 提早結束會讓前面的 grep 收到 SIGPIPE。
+detect_external_p10k() {
+  local active
+  active="$(user_region | grep -vE "^$SP*#" || true)"
+  printf '%s\n' "$active" | grep -E "(^|[;&|[:space:]])(source|\.)$SP+.*powerlevel10k\.zsh-theme" >/dev/null || return 0
+  printf '%s\n' "$active" | grep -E "^$SP*ZSH_THEME=[\"']?powerlevel10k/" >/dev/null && return 0
+  DET_HAS_EXTERNAL_P10K=1
+}
+
 detect_zshrc_mode() {
   if [ ! -f "$ZSHRC" ] || [ ! -s "$ZSHRC" ]; then
     DET_ZSHRC_MODE="full"
@@ -809,6 +821,7 @@ detect_zshrc_mode() {
 
   user_region_has 'p10k-instant-prompt' && DET_HAS_INSTANT_PROMPT=1 || true
   user_region_has '\.p10k\.zsh' && DET_HAS_P10K_SOURCE=1 || true
+  detect_external_p10k
   user_region_has "\\[\\[$SP*-o$SP+interactive$SP*\\]\\]$SP*\\|\\|$SP*return" && DET_HAS_GUARD=1 || true
   user_region_has 'bindkey.*beginning-of-line' && DET_HAS_BINDKEY=1 || true
   user_region_has "^$SP*HIST_STAMPS=" && DET_HAS_HIST_STAMPS=1 || true
@@ -1163,7 +1176,11 @@ print_report() {
     printf '  系統套件                無（需要的都在，完全不碰套件管理器）\n'
   fi
   printf '  oh-my-zsh               %s\n' "$([ -d "$OH_MY_ZSH_DIR" ] && echo '已有，不動' || echo '將安裝')"
-  printf '  Powerlevel10k           %s\n' "$([ -d "$ZSH_CUSTOM_DIR/themes/powerlevel10k" ] && echo '已有，不動' || echo '將安裝')"
+  if [ "$DET_HAS_EXTERNAL_P10K" -eq 1 ]; then
+    printf '  Powerlevel10k           你的 .zshrc 已經自己載入，不另外 clone\n'
+  else
+    printf '  Powerlevel10k           %s\n' "$([ -d "$ZSH_CUSTOM_DIR/themes/powerlevel10k" ] && echo '已有，不動' || echo '將安裝')"
+  fi
   printf '  plugins                 zsh-autosuggestions / fast-syntax-highlighting / zsh-completions\n'
   printf '  ~/.p10k.zsh             %s\n' "$([ -f "$HOME/.p10k.zsh" ] && echo '已有，不覆蓋' || echo '將寫入內建 template')"
   if [ "$OPT_NO_FONTS" -eq 1 ]; then
@@ -1546,8 +1563,12 @@ install_oh_my_zsh() {
 
 install_theme_and_plugins() {
   mkdir -p "$ZSH_CUSTOM_DIR/themes" "$ZSH_CUSTOM_DIR/plugins"
-  clone_or_update https://github.com/romkatv/powerlevel10k.git \
-    "$ZSH_CUSTOM_DIR/themes/powerlevel10k" "Powerlevel10k"
+  if [ "$DET_HAS_EXTERNAL_P10K" -eq 1 ]; then
+    info "你的 .zshrc 已經自己載入 Powerlevel10k，不另外 clone。"
+  else
+    clone_or_update https://github.com/romkatv/powerlevel10k.git \
+      "$ZSH_CUSTOM_DIR/themes/powerlevel10k" "Powerlevel10k"
+  fi
   clone_or_update https://github.com/zsh-users/zsh-autosuggestions.git \
     "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" "zsh-autosuggestions"
   clone_or_update https://github.com/zdharma-continuum/fast-syntax-highlighting.git \
@@ -1570,6 +1591,9 @@ install_p10k_template() {
   ok "已寫入 ~/.p10k.zsh（$(wc -c < "$HOME/.p10k.zsh") bytes）"
 }
 
+# 重試用完還是沒下載到的字型數，結尾要照實講。
+FONT_FAILED=0
+
 install_fonts() {
   [ "$OPT_NO_FONTS" -eq 1 ] && return 0
   if [ "$DET_HAS_DESKTOP" -eq 0 ]; then
@@ -1583,7 +1607,7 @@ install_fonts() {
   for style in "Regular" "Bold" "Italic" "Bold%20Italic"; do
     local name="${style//%20/ }"
     download_if_missing "$LOCAL_FONTS/MesloLGS NF ${name}.ttf" \
-      "$base/MesloLGS%20NF%20${style}.ttf" || warn "字型下載失敗：$name"
+      "$base/MesloLGS%20NF%20${style}.ttf" || { warn "字型下載失敗：$name"; FONT_FAILED=$((FONT_FAILED + 1)); }
   done
   [ "$DET_IS_MACOS" -eq 1 ] && return 0
   has_command fc-cache && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true
@@ -1980,7 +2004,14 @@ EOS
     cat <<'EOS'
 
 export ZSH="${ZSH:-$HOME/.oh-my-zsh}"
-ZSH_THEME="powerlevel10k/powerlevel10k"
+EOS
+    if [ "$DET_HAS_EXTERNAL_P10K" -eq 1 ]; then
+      printf '%s\n' '# 你的 .zshrc 自己載入了 Powerlevel10k，所以不讓 oh-my-zsh 再載一次主題。'
+      printf '%s\n' 'ZSH_THEME=""'
+    else
+      printf '%s\n' 'ZSH_THEME="powerlevel10k/powerlevel10k"'
+    fi
+    cat <<'EOS'
 
 plugins=(
   git
@@ -2432,9 +2463,11 @@ do_uninstall() {
 
 print_font_guide() {
   if [ "$DET_IS_MACOS" -eq 1 ]; then
+    local font_head="字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF"
+    [ "$FONT_FAILED" -gt 0 ] && font_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"
     cat <<EOF
 
-${C_BOLD}字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF${C_RESET}
+${C_BOLD}${font_head}${C_RESET}
 
     iTerm2        Settings → Profiles → Text → Font
     Terminal.app  設定 → 描述檔 → 文字 → 字體 → 更改
@@ -2473,6 +2506,9 @@ print_summary() {
   printf '  模式           %s\n' "$DET_ZSHRC_MODE"
   printf '  login shell    %s\n' "$(login_shell_of_current_user)"
   printf '\n'
+  if [ "$FONT_FAILED" -gt 0 ]; then
+    printf '%s[WARN] 有 %d 個字型沒裝到（下載失敗），重跑一次這支腳本會補上。%s\n\n' "$C_YEL" "$FONT_FAILED" "$C_RESET"
+  fi
   printf '%s下一步%s\n' "$C_BOLD" "$C_RESET"
   printf '  1. 開一個新的終端機視窗（或重新 ssh 進來）\n'
   printf '  2. 把終端機字型設成 MesloLGS NF（見下面說明）\n'
