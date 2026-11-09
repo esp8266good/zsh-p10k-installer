@@ -283,6 +283,8 @@ EOF
       ;;
     self-build)
       # 沒有 zsh 也沒有 sudo：只剩自己編譯這條路。
+      # 映像裡的 apt 索引會過期，libc6-dev 拉到的 linux-libc-dev 舊版會 404，所以這裡要先更新。
+      sudo apt-get update -qq >/dev/null 2>&1
       sudo apt-get install -y -qq --no-install-recommends gcc g++ libc6-dev make xz-utils >/dev/null 2>&1
       sudo rm -f /usr/bin/sudo
       export PATH="$HOME/.local/bin:$PATH"
@@ -472,6 +474,14 @@ case "$FIXTURE" in
     check "新建的 .bash_profile 有 source .profile" \
           'grep -q "\. ~/.profile" "$HOME/.bash_profile"'
     check ".profile 的內容仍然生效"     'bash -lc "echo \$PROFILE_SENTINEL" | grep -q must-survive'
+    # zsh 裝了卻跑不起來時，hook 要留在 bash，不能讓人連 shell 都開不了。
+    # hook 會跳過 TERM=dumb，容器裡的 script 預設就是，所以要自己設。
+    login_in_tty() { TERM=xterm-256color timeout 15 script -qc 'bash -l -i -c "echo STILL_BASH"' /dev/null </dev/null 2>/dev/null; }
+    check "zsh 正常時 hook 會切過去"    '! login_in_tty | grep -q STILL_BASH'
+    sudo cp /usr/bin/zsh /tmp/zsh.real
+    printf '#!/bin/sh\nexit 1\n' | sudo tee /usr/bin/zsh >/dev/null
+    check "zsh 跑不起來時留在 bash"     'login_in_tty | grep -q STILL_BASH'
+    sudo cp /tmp/zsh.real /usr/bin/zsh
     ;;
   dotfiles-symlink)
     check ".zshrc 仍然是 symlink"       '[ -L "$HOME/.zshrc" ]'

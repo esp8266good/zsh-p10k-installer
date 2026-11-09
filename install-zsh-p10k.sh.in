@@ -843,11 +843,31 @@ detect_missing_packages() {
 # 註解掉的行不算；ZSH_THEME 還指著 clone 的路徑時也不算，那份 clone 是它要用的。
 # 這裡用 grep > /dev/null 不用 -q：-q 提早結束會讓前面的 grep 收到 SIGPIPE。
 detect_external_p10k() {
-  local active
+  local active tokens token found=0
   active="$(user_region | grep -vE "^$SP*#" || true)"
-  printf '%s\n' "$active" | grep -E "(^|[;&|[:space:]])(source|\.)$SP+.*powerlevel10k\.zsh-theme" >/dev/null || return 0
   printf '%s\n' "$active" | grep -E "^$SP*ZSH_THEME=[\"']?powerlevel10k/" >/dev/null && return 0
-  DET_HAS_EXTERNAL_P10K=1
+  tokens="$(printf '%s\n' "$active" \
+    | grep -E "(^|[;&|[:space:]])(source|\.)$SP+.*powerlevel10k\.zsh-theme" \
+    | grep -oE "[^[:space:];&|\"']*powerlevel10k\.zsh-theme" || true)"
+  [ -n "$tokens" ] || return 0
+  # 跨機器共用的 dotfiles 常有 [[ -r /opt/homebrew/... ]] && source ...，這台沒有那個檔案就不算。
+  # 路徑要跑指令才知道的（$(brew --prefix) 之類）判斷不了，相信使用者寫的。
+  while IFS= read -r token; do
+    case "$token" in
+      "~/"*)       token="$HOME/${token#\~/}" ;;
+      '$HOME/'*)   token="$HOME/${token#\$HOME/}" ;;
+      '${HOME}/'*) token="$HOME/${token#\$\{HOME\}/}" ;;
+    esac
+    case "$token" in
+      *'$'*|*'`'*|*')'*) found=1 ;;
+      /*) if [ -f "$token" ]; then found=1; fi ;;
+      *) found=1 ;;
+    esac
+  done <<EOF
+$tokens
+EOF
+  if [ "$found" -eq 1 ]; then DET_HAS_EXTERNAL_P10K=1; fi
+  return 0
 }
 
 detect_zshrc_mode() {
@@ -1198,8 +1218,12 @@ print_report() {
       hook)
         printf '  ~/.bash_profile         %schsh 走不通（%s），\n' "$C_YEL" "${DET_CHSH_METHOD#*:}"
         printf '                          改裝一個只在互動式 login shell 生效的 auto-start hook。%s\n' "$C_RESET"
-        printf '                          login shell 仍然是 %s。要真的改請自己跑：chsh -s %s\n' \
-          "$DET_LOGIN_SHELL" "$DET_ZSH_PATH"
+        if [ "$IS_WINDOWS" -eq 1 ]; then
+          printf '                          Windows 沒有 login shell 可以改，開 Git Bash 時由這段 hook 切進 zsh。\n'
+        else
+          printf '                          login shell 仍然是 %s。要真的改請自己跑：chsh -s %s\n' \
+            "$DET_LOGIN_SHELL" "$DET_ZSH_PATH"
+        fi
         [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.profile" ] && \
           printf '                          %s（這台還沒有 .bash_profile，新建的那份會先 source 你的 .profile）%s\n' \
             "$C_DIM" "$C_RESET"
@@ -1443,7 +1467,7 @@ fetch_verified() {
     got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; }
     [ "$got" = "$sha" ] && return 0
     rm -f "$out"
-    die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不編譯來路不明的原始碼。"
+    die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不使用來路不明的檔案。"
   done
   die "下載失敗：$out"
 }
@@ -1565,7 +1589,8 @@ install_zsh_msys() {
   unzip -q "$tmp/zstd.zip" -d "$tmp" || die "解不開 zstd 的壓縮檔。"
   rm -rf "$new"
   mkdir -p "$new"
-  "$tmp/$WIN_ZSTD_NAME/zstd.exe" -dc "$tmp/zsh.tar.zst" \
+  # 用 stdin 餵檔案：路徑不用經過 zstd.exe 的 argv，帳號名稱有中文時才不會出事。
+  "$tmp/$WIN_ZSTD_NAME/zstd.exe" -dc < "$tmp/zsh.tar.zst" \
     | tar -xf - -C "$new" --exclude=.BUILDINFO --exclude=.MTREE --exclude=.PKGINFO \
     || die "解不開 zsh 的套件。"
   rm -rf "$tmp"
@@ -1680,7 +1705,7 @@ register_windows_fonts() {
     [ -f "$f" ] || continue
     name="$(basename "$f" .ttf)"
     MSYS_NO_PATHCONV=1 reg add "$WIN_FONT_KEY" /v "$name (TrueType)" /t REG_SZ /d "$(cygpath -w "$f")" /f >/dev/null 2>&1 \
-      || warn "字型登錄失敗：$name"
+      || { warn "字型登錄失敗：$name"; FONT_FAILED=$((FONT_FAILED + 1)); }
   done
 }
 
@@ -1692,7 +1717,8 @@ install_fonts() {
   fi
   info "安裝 MesloLGS NF 字型"
   mkdir -p "$LOCAL_FONTS"
-  local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
+  # 網址釘在 commit 上：配合下面寫死的 sha256，上游更新 master 也不會讓所有安裝都核對失敗。
+  local base="https://github.com/romkatv/powerlevel10k-media/raw/145eb9fbc2f42ee408dacd9b22d8e6e0e553f83d"
   # sha256 從兩個地方各下載一次核對過（2026-11-09）。上游換字型時要一起改。
   local entry style sha name out
   for entry in \
@@ -1748,7 +1774,8 @@ find_iterm2_app() {
   done
   # MDM 可能裝在別的地方，問 Spotlight。
   if has_command mdfind; then
-    d="$(mdfind "kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'" 2>/dev/null | head -1)" || d=""
+    # 用 awk 不用 head：head 提早結束會讓 mdfind 收到 SIGPIPE，pipefail 下抓到的結果會被丟掉。
+    d="$(mdfind "kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'" 2>/dev/null | awk 'NR==1')" || d=""
     [ -n "$d" ] && [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
   fi
   return 1
@@ -2381,6 +2408,16 @@ install_bash_profile_hook() {
   # bash 的 login shell 只會讀 .bash_profile / .bash_login / .profile 之中「第一個
   # 存在的」。所以在只有 .profile 的機器上憑空生一個 .bash_profile，
   # 等於把使用者的 .profile 整份停用，PATH、conda、proxy 全部一起消失。
+  # .bash_login 的優先序比 .profile 高，要先看它。
+  if [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.bash_login" ]; then
+    info "這台沒有 ~/.bash_profile。新建的那份會先 source 你原本的 ~/.bash_login。"
+    cat > "$HOME/.bash_profile" <<'EOF'
+# 這個檔案由 install-zsh-p10k 建立。
+# 這個檔案一出現，bash 就不會再讀 ~/.bash_login 了，下面這行把它讀回來。
+[ -f ~/.bash_login ] && . ~/.bash_login
+EOF
+    chmod 600 "$HOME/.bash_profile"
+  fi
   if [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.profile" ]; then
     info "這台沒有 ~/.bash_profile。新建的那份會先 source 你原本的 ~/.profile。"
     cat > "$HOME/.bash_profile" <<'EOF'
@@ -2393,7 +2430,7 @@ EOF
     chmod 600 "$HOME/.bash_profile"
   fi
   # Git Bash 開的是 login shell，只有 .bashrc 的話，新生的 .bash_profile 要把它讀回來。
-  if [ "$IS_WINDOWS" -eq 1 ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.bash_login" ] && [ -f "$HOME/.bashrc" ]; then
+  if [ "$IS_WINDOWS" -eq 1 ] && [ ! -f "$HOME/.bash_profile" ] && [ -f "$HOME/.bashrc" ]; then
     info "這台沒有 ~/.bash_profile。新建的那份會先 source 你原本的 ~/.bashrc。"
     cat > "$HOME/.bash_profile" <<'EOF'
 # 這個檔案由 install-zsh-p10k 建立。
@@ -2416,7 +2453,8 @@ $HOOK_BEGIN
 if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
    && [ -t 0 ] && [ -t 1 ] && case "\$-" in *i*) true ;; *) false ;; esac \\
    && [ -z "\$CI" ] && [ -z "\$GITHUB_ACTIONS" ] && [ -z "\$CODESPACES" ] \\
-   && [ -z "\$VSCODE_PID" ] && [ "\${TERM:-}" != "dumb" ]; then
+   && [ -z "\$VSCODE_PID" ] && [ "\${TERM:-}" != "dumb" ] \\
+   && "$target" -fc : >/dev/null 2>&1; then
   export SHELL="$target"
   exec "$target" -l
 fi
@@ -2600,6 +2638,7 @@ print_font_guide() {
   if [ "$IS_WINDOWS" -eq 1 ]; then
     local win_head="字型：已經裝在這個 Windows 帳號，剩下把終端機的字型改成 MesloLGS NF"
     [ "$FONT_FAILED" -gt 0 ] && win_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"
+    [ "$OPT_NO_FONTS" -eq 1 ] && win_head="字型：依 --no-fonts 略過安裝。要看到 p10k 的圖示，請自己裝 MesloLGS NF 並設成終端機字型"
     cat <<EOF
 
 ${C_BOLD}${win_head}${C_RESET}
@@ -2615,6 +2654,7 @@ EOF
   if [ "$DET_IS_MACOS" -eq 1 ]; then
     local font_head="字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF"
     [ "$FONT_FAILED" -gt 0 ] && font_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"
+    [ "$OPT_NO_FONTS" -eq 1 ] && font_head="字型：依 --no-fonts 略過安裝。要看到 p10k 的圖示，請自己裝 MesloLGS NF 並設成終端機字型"
     cat <<EOF
 
 ${C_BOLD}${font_head}${C_RESET}
@@ -2657,10 +2697,13 @@ print_summary() {
   printf '  login shell    %s\n' "$(login_shell_of_current_user)"
   printf '\n'
   if [ "$FONT_FAILED" -gt 0 ]; then
-    printf '%s[WARN] 有 %d 個字型沒裝到（下載失敗），重跑一次這支腳本會補上。%s\n\n' "$C_YEL" "$FONT_FAILED" "$C_RESET"
+    printf '%s[WARN] 有 %d 個字型沒裝到（下載或登錄失敗），重跑一次這支腳本會補上。%s\n\n' "$C_YEL" "$FONT_FAILED" "$C_RESET"
   fi
   printf '%s下一步%s\n' "$C_BOLD" "$C_RESET"
   printf '  1. 開一個新的終端機視窗（或重新 ssh 進來）\n'
+  if [ "$IS_WINDOWS" -eq 1 ] && [ "$OPT_NO_CHSH" -eq 1 ]; then
+    printf '     你用了 --no-chsh，不會自動進 zsh。要手動進 zsh：%s -l\n' "$DET_ZSH_PATH"
+  fi
   printf '  2. 把終端機字型設成 MesloLGS NF（見下面說明）\n'
   [ -f "$ZSHRC_LOCAL" ] && \
     printf '  3. 看一下 ~/.zshrc.local，把你要的 alias / export 取消註解\n'
@@ -2697,6 +2740,10 @@ main() {
   check_supported
   macos_require_clt
   print_report
+  # MSYS2 版 zsh 的 zcompile 寫不了非 ASCII 路徑（換 locale 也一樣，實測），p10k 又沒有開關可以關掉編譯。
+  if [ "$IS_WINDOWS" -eq 1 ] && printf '%s' "$HOME" | LC_ALL=C grep '[^ -~]' >/dev/null; then
+    warn "你的家目錄路徑有非 ASCII 字元（例如中文帳號名稱）。zsh 和 p10k 能用，但開新視窗時可能會印出 zcompile 的錯誤訊息。"
+  fi
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
     printf '\n%s--dry-run：到此為止，沒有修改任何檔案。%s\n\n' "$C_YEL" "$C_RESET"

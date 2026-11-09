@@ -17,7 +17,7 @@
 git tag v3.2.0 && git push origin main v3.2.0
 ```
 
-CI 會 build、跑 shellcheck、全部 fixture 與兩種 macOS runner 的 smoke test，都過了才建立 Release，附上腳本與 `SHA256SUMS`。
+CI 會 build、跑 shellcheck、全部 fixture 與 macOS、Windows runner 的 smoke test，都過了才建立 Release，附上腳本與 `SHA256SUMS`。
 tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 
 ## fixture
@@ -38,6 +38,9 @@ tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 | `ancient-awk` | 樹莓派的 mawk 1.3.3（1996 年版） | `[[:space:]]` 不報錯但永遠比對不到 |
 | `dotfiles-symlink` | `.zshrc` 是 stow / chezmoi 建的 symlink | symlink 被換成一般檔案 |
 | `sticky-options` | 第一次帶了 `--omz-update reminder --no-chsh`，之後都不帶 | 選項悄悄變回預設值 |
+| `font-fail` | 字型的網址一律下載失敗 | 字型沒裝到，結尾還說裝好了 |
+| `external-p10k` | `.zshrc` 自己 source 外部的 p10k | 多 clone 一份、oh-my-zsh 去找不存在的主題 |
+| `self-build` | 沒有 zsh 也沒有 sudo | 自行編譯那條路壞掉沒人發現 |
 
 `ancient-awk` 要另外拉 `debian:buster` 映像，比較慢，但只有它測得到 mawk 1.3.3 那種
 「regex 不報錯、就是永遠不成立」的狀況，在 gawk 或 mawk 1.3.4 上怎麼測都會過。
@@ -61,6 +64,20 @@ CI 在 `macos-15`（Apple silicon）和 `macos-15-intel` 上各跑一次。
 有 tty 的情境用 `expect` 送答案，不用 `printf ... | script`：macOS 的 `script` 讀到 stdin 的 EOF 會送出 `^D`，
 而且比前面的輸入還早被處理，`read` 會讀到空字串。
 `expect` 的比對字串只能用 ASCII（`[y/N] `、`Ctrl-C`）：macOS 內建的 expect 5.45 遇到中文比對字串會 segfault。
+
+## Windows
+
+`tests/windows-smoke.sh` 要在 Git Bash 裡跑：`bash tests/windows-smoke.sh`。
+每個情境都用暫存的 `HOME` 和 `LOCALAPPDATA`，字型登錄寫在測試專用的機碼（`ZSH_P10K_WIN_FONT_KEY`），跑完刪掉。
+CI 在 `windows-2022`、`windows-2025` 上各跑一次。
+
+Git Bash 上要注意的事：
+
+- 傳給 Windows 程式的 `/v` 這類參數會被當成路徑改寫，要加 `MSYS_NO_PATHCONV=1`。
+- `chmod 600` 沒有效果，`ln -s` 會變成複製。
+- Git for Windows 出廠是 `core.autocrlf=true`，clone 要明確關掉。
+- Windows 10 內建的 `tar` 沒有 zstd，Windows 11 有，只在 Windows 11 上測會漏掉。
+- 開真的視窗時 hook 會不會切進 zsh，ssh 和 CI 都沒有 tty 測不到，要有人實際開一次。
 
 ## 寫法規則
 

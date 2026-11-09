@@ -72,7 +72,7 @@ run_gb() {
   : > "$SUDO_LOG"
   RC=0
   env HOME="$home" LOCALAPPDATA="$(cygpath -w "$home/appdata")" \
-    GIT_CONFIG_GLOBAL="$WORK/gitconfig" ZSH_P10K_WIN_FONT_KEY="$FONT_KEY" \
+    GIT_CONFIG_GLOBAL="$WORK/gitconfig" ZSH_P10K_WIN_FONT_KEY="${RUN_FONT_KEY:-$FONT_KEY}" \
     PATH="$WORK/bin:$PATH" bash "$INSTALLER" "$@" < /dev/null > "$OUT" 2>&1 || RC=$?
 }
 
@@ -129,7 +129,103 @@ t_clean() {
   err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null)"
   check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
   check "p10k 真的有載入" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[p10k]}" | tail -1)" = 1 ]'
-  check "沒有留下下載的暫存檔" '[ -z "$(find "$h/.local" -maxdepth 2 -name "*.part" | head -1)" ]'
+  check "字型目錄沒有留下 .part" '[ -z "$(find "$(fonts_dir "$h")" -name "*.part" | head -1)" ]'
+  check "沒有留下 zsh-msys.new" '[ ! -e "$h/.local/zsh-msys.new" ]'
+  check "報告沒有叫人跑不存在的 chsh" '! out_has "chsh -s"'
+}
+
+# 使用者名稱有空白的帳號，HOME 就長這樣。
+t_spaced_home() {
+  banner "spaced-home"
+  local h="$WORK/te st home" err
+  mkdir -p "$h"
+  run_gb "$h"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
+  check "四個字型都在" '[ "$(fonts_count "$h")" = 4 ]'
+  err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null)"
+  check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -8 | sed 's/^/    | /'
+  check "沒有多餘的路徑警告" '! out_has "非 ASCII"'
+}
+
+# 中文帳號：MSYS2 版 zsh 的 zcompile 寫不了這種路徑，p10k 會印錯誤。
+# 要驗的是事前有講，而且 zsh 和 p10k 還是能用。
+t_nonascii_home() {
+  banner "nonascii-home"
+  local h="$WORK/使用者"
+  mkdir -p "$h"
+  run_gb "$h"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "事前有警告" 'out_has "非 ASCII"'
+  check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
+  check "四個字型都在" '[ "$(fonts_count "$h")" = 4 ]'
+  check "p10k 還是載得起來" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[p10k]}" | tail -1)" = 1 ]'
+}
+
+# zsh 套件的內容被換掉：要停下來，不能留下裝一半的 zsh。
+t_bad_zsh_hash() {
+  banner "bad-zsh-hash"
+  local h d real_curl; h="$(new_home)"; d="$WORK/badzsh"; mkdir -p "$d"
+  real_curl="$(command -v curl)"
+  cat > "$d/curl" <<EOF
+#!/bin/sh
+url=""; out=""; prev=""
+for a in "\$@"; do
+  [ "\$prev" = "-o" ] && out="\$a"
+  case "\$a" in http*msys/x86_64/zsh-*) url="\$a" ;; esac
+  prev="\$a"
+done
+if [ -n "\$url" ]; then printf 'not a package' > "\$out"; exit 0; fi
+exec "$real_curl" "\$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_gb "$h"
+  check "停下來（不是 exit 0）" '[ "$RC" -ne 0 ]'
+  check "輸出提到 sha256" 'out_has "sha256"'
+  check "沒有裝半套 zsh" '[ ! -e "$h/.local/zsh-msys" ] && [ ! -e "$h/.local/zsh-msys.new" ]'
+}
+
+# 字型檔在、但登錄失敗：字型清單看不到，不能說裝好了。
+t_reg_fail() {
+  banner "reg-fail"
+  ensure_clean_home
+  local h="$CLEAN_HOME"
+  RUN_FONT_KEY='HKXX\Software\nope' run_gb "$h"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "結尾講 4 個字型沒裝到" 'out_has "4 個字型沒裝到"'
+  check "結尾沒有說字型已經裝好" '! out_has "已經裝在這個 Windows 帳號"'
+}
+
+# 明講不裝字型：結尾不能說裝好了。
+t_no_fonts_claim() {
+  banner "no-fonts-claim"
+  ensure_clean_home
+  run_gb "$CLEAN_HOME" --no-fonts
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "結尾沒有說字型已經裝好" '! out_has "已經裝在這個 Windows 帳號"'
+  check "結尾講是 --no-fonts 略過的" 'out_has "--no-fonts"'
+}
+
+# --no-chsh 不裝 hook，zsh 又不在 PATH，要告訴人怎麼進 zsh。
+t_no_chsh_hint() {
+  banner "no-chsh-hint"
+  ensure_clean_home
+  run_gb "$CLEAN_HOME" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "結尾有教手動進 zsh" 'out_has "手動進 zsh"'
+}
+
+# Git Bash 的 login shell 優先讀 .bash_profile。只有 .bash_login 時，
+# 新生的 .bash_profile 會讓它失效。
+t_keep_bash_login() {
+  banner "keep-bash-login"
+  local h; h="$(new_home)"
+  printf 'export FROM_LOGIN=yes\n' > "$h/.bash_login"
+  run_gb "$h"
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "login bash 還讀得到 .bash_login" \
+    '[ "$(HOME="$h" bash -lc "echo \$FROM_LOGIN" 2>/dev/null | tail -1)" = yes ]'
 }
 
 t_rerun() {
@@ -153,6 +249,8 @@ t_keep_bashrc() {
   printf 'export FROM_BASHRC=yes\n' > "$h/.bashrc"
   run_gb "$h"
   check "exit 0" '[ "$RC" -eq 0 ]'
+  # 這條要在跑 login bash 之前：Git Bash 的 /etc/profile.d 可能會自己補一個 .bash_profile。
+  check "新的 .bash_profile 有 source .bashrc" 'grep -q "\.bashrc" "$h/.bash_profile"'
   check "login bash 還讀得到 .bashrc" \
     '[ "$(HOME="$h" bash -lc "echo \$FROM_BASHRC" 2>/dev/null | tail -1)" = yes ]'
 }
@@ -203,7 +301,8 @@ t_uninstall() {
   check "沒有教 chsh（Git Bash 沒有這個指令）" '! out_has "chsh"'
 }
 
-ALL_SCENARIOS="dry-run clean rerun keep-bashrc existing-zsh uninstall font-fail"
+ALL_SCENARIOS="dry-run clean rerun reg-fail no-fonts-claim no-chsh-hint uninstall
+keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash spaced-home nonascii-home"
 
 run_scenario() {
   case "$1" in
@@ -214,6 +313,13 @@ run_scenario() {
     existing-zsh) t_existing_zsh ;;
     uninstall)    t_uninstall ;;
     font-fail)    t_font_fail ;;
+    reg-fail)     t_reg_fail ;;
+    no-fonts-claim) t_no_fonts_claim ;;
+    no-chsh-hint) t_no_chsh_hint ;;
+    keep-bash-login) t_keep_bash_login ;;
+    bad-zsh-hash) t_bad_zsh_hash ;;
+    spaced-home)  t_spaced_home ;;
+    nonascii-home) t_nonascii_home ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }

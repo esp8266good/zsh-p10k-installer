@@ -106,6 +106,9 @@ macOS 的 login shell 會跑 `/etc/zprofile` 裡的 `path_helper`，它可能把
 
 只支援 Git Bash。PowerShell 和 cmd 不會變成 zsh。
 
+帳號名稱有中文之類的非 ASCII 字元時，zsh 和 p10k 能用，但開新視窗可能會印出 `zcompile` 的錯誤訊息：
+MSYS2 版 zsh 的 `zcompile` 寫不了這種路徑。腳本會在動手前警告。
+
 ## 一次裝很多台
 
 ```bash

@@ -466,6 +466,16 @@ source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
 EOF
   run_notty "$h" --dry-run
   check "ZSH_THEME 還指著 clone 的路徑就要 clone" '! out_has "不另外 clone"'
+  # 跨機器共用的 dotfiles：這台沒有 Homebrew，那行 source 根本不會生效。
+  h="$(new_home)"
+  printf '[[ -r /opt/nowhere/powerlevel10k.zsh-theme ]] && source /opt/nowhere/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "source 的檔案不存在就要 clone" '! out_has "不另外 clone"'
+  # 路徑要跑指令才知道：沒辦法判斷，相信使用者寫的。
+  h="$(new_home)"
+  printf 'source $(brew --prefix)/share/powerlevel10k/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "路徑解析不了時相信使用者" 'out_has "不另外 clone"'
 }
 
 t_uninstall_hint() {
