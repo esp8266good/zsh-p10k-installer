@@ -281,6 +281,13 @@ EOF
       seed_extra_bashrc
       EXTRA_ARGS="--omz-update reminder --no-chsh"
       ;;
+    self-build)
+      # 沒有 zsh 也沒有 sudo：只剩自己編譯這條路。
+      sudo apt-get install -y -qq --no-install-recommends gcc g++ libc6-dev make xz-utils >/dev/null 2>&1
+      sudo rm -f /usr/bin/sudo
+      export PATH="$HOME/.local/bin:$PATH"
+      seed_extra_bashrc
+      ;;
     font-fail)
       # 字型的網址一律失敗，重試用完之後結尾要講實話。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
@@ -289,6 +296,7 @@ EOF
       mkdir -p /tmp/failcurl
       cat > /tmp/failcurl/curl <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >> /tmp/failcurl/args
 for a in "$@"; do
   case "$a" in
     http*MesloLGS*) echo "curl: (56) simulated failure" >&2; exit 56 ;;
@@ -384,6 +392,14 @@ case "$FIXTURE" in
     check "login shell 維持 bash"       'getent passwd tester | grep -q "bash$"'
     check "報告事先講明 chsh 走不通"     'grep -q "chsh 走不通" /tmp/run1.log'
     ;;
+  self-build)
+    check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
+    check "報告講會自行編譯"            'grep -q "自行編譯" /tmp/run1.log'
+    check "zsh 編好放在 ~/.local/bin"   '[ -x "$HOME/.local/bin/zsh" ]'
+    check "編好的 zsh 載得起模組"       '[ "$("$HOME/.local/bin/zsh" -c "zmodload zsh/datetime && print ok")" = ok ]'
+    check "login shell 維持 bash"       'getent passwd tester | grep -q "bash$"'
+    check "改裝 hook"                   'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
+    ;;
   *)
     check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
     check "login shell 已改成 zsh"      'getent passwd tester | grep -q "zsh$"'
@@ -434,6 +450,7 @@ case "$FIXTURE" in
     check "安裝照樣完成"                '[ "$RC1" -eq 0 ]'
     check "沒有裝到字型檔"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.ttf" 2>/dev/null | head -1)" ]'
     check "結尾講 4 個字型沒裝到"       'grep -q "4 個字型沒裝到" /tmp/run1.log'
+    check "下載先寫到 .part"            'grep -q "MesloLGS NF Regular.ttf.part" /tmp/failcurl/args'
     check "沒有留下 .part"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.part" 2>/dev/null | head -1)" ]'
     ;;
   external-p10k)

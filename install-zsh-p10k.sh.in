@@ -1388,14 +1388,25 @@ confirm_or_exit() {
 # ---------------------------------------------------------------------------
 
 # 先下載到旁邊的 .part，成功才改名。
-# 直接寫到 $out 的話，斷線會留下半個檔案，download_if_missing 之後看到檔案在
+# 直接寫到 $out 的話，斷線會留下半個檔案，install_fonts 之後看到檔案在
 # 就不再下載，字型從此壞著，重跑也修不好。
 #
 # 失敗會重試，總共 DOWNLOAD_TRIES 次，中間等 2、4 秒。
 # 只試一次的話，網路一抖字型就少一個：v3.3.0 的 CI 在 GitHub 的 Intel runner 上連續兩次這樣。
 DOWNLOAD_TRIES=3
+# 正在下載的 .part 檔。按 Ctrl-C 時 on_interrupt 要清掉它。
+DOWNLOAD_PART=""
+
+on_interrupt() {
+  [ -n "$DOWNLOAD_PART" ] && rm -f "$DOWNLOAD_PART"
+  printf '\n' >&2
+  err "中斷了。這次改到一半的東西重跑一次就會補上。"
+  exit 130
+}
+
 download_to() {
   local out="$1" url="$2" part="$1.part" try=1
+  DOWNLOAD_PART="$part"
   while :; do
     if has_command curl; then
       curl -fsSL --connect-timeout 20 -o "$part" "$url" && { mv "$part" "$out"; return 0; }
@@ -1452,12 +1463,6 @@ fetch_verified_soft() {
   done
   warn "下載失敗：$*"
   return 1
-}
-
-download_if_missing() {
-  local out="$1" url="$2"
-  [ -f "$out" ] && return 0
-  download_to "$out" "$url"
 }
 
 # ---------------------------------------------------------------------------
@@ -1688,11 +1693,20 @@ install_fonts() {
   info "安裝 MesloLGS NF 字型"
   mkdir -p "$LOCAL_FONTS"
   local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
-  local style
-  for style in "Regular" "Bold" "Italic" "Bold%20Italic"; do
-    local name="${style//%20/ }"
-    download_if_missing "$LOCAL_FONTS/MesloLGS NF ${name}.ttf" \
-      "$base/MesloLGS%20NF%20${style}.ttf" || { warn "字型下載失敗：$name"; FONT_FAILED=$((FONT_FAILED + 1)); }
+  # sha256 從兩個地方各下載一次核對過（2026-11-09）。上游換字型時要一起改。
+  local entry style sha name out
+  for entry in \
+    "Regular:d97946186e97f8d7c0139e8983abf40a1d2d086924f2c5dbf1c29bd8f2c6e57d" \
+    "Bold:b6c0199cf7c7483c8343ea020658925e6de0aeb318b89908152fcb4d19226003" \
+    "Italic:6f357bcbe2597704e157a915625928bca38364a89c22a4ac36e7a116dcd392ef" \
+    "Bold%20Italic:56b4131adecec052c4b324efb818dd326d586dbc316fc68f98f1cae2eb8d1220"; do
+    style="${entry%%:*}"
+    sha="${entry##*:}"
+    name="${style//%20/ }"
+    out="$LOCAL_FONTS/MesloLGS NF ${name}.ttf"
+    [ -f "$out" ] && continue
+    fetch_verified_soft "$out" "$sha" "$base/MesloLGS%20NF%20${style}.ttf" \
+      || { warn "字型沒裝到：$name"; FONT_FAILED=$((FONT_FAILED + 1)); }
   done
   [ "$DET_IS_MACOS" -eq 1 ] && return 0
   if [ "$IS_WINDOWS" -eq 1 ]; then
@@ -1732,6 +1746,11 @@ find_iterm2_app() {
   for d in /Applications "$HOME/Applications"; do
     [ -d "$d/iTerm.app" ] && { printf '%s\n' "$d/iTerm.app"; return 0; }
   done
+  # MDM 可能裝在別的地方，問 Spotlight。
+  if has_command mdfind; then
+    d="$(mdfind "kMDItemCFBundleIdentifier == 'com.googlecode.iterm2'" 2>/dev/null | head -1)" || d=""
+    [ -n "$d" ] && [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+  fi
   return 1
 }
 
@@ -2554,6 +2573,7 @@ do_uninstall() {
   printf '    （裡面可能有你自己放的 custom plugin / theme，所以不代為刪除）\n'
   printf '  ~/.p10k.zsh           rm -f ~/.p10k.zsh\n'
   printf '  ~/.zshrc.local        rm -f ~/.zshrc.local\n'
+  printf '  （MesloLGS NF 字型如果在跑本腳本之前就有，請保留：p10k configure 裝的也是同名字型）\n'
   if [ "$(uname -s)" = "Darwin" ]; then
     # ~/Library/Fonts 裡還有使用者自己的字型，絕對不能整個目錄刪掉。
     printf '  字型                  rm -f ~/Library/Fonts/MesloLGS\\ NF\\ *.ttf\n'
@@ -2658,6 +2678,8 @@ print_summary() {
 # ---------------------------------------------------------------------------
 
 main() {
+  trap on_interrupt INT TERM
+
   if [ "$OPT_ROLLBACK" -eq 1 ]; then
     do_rollback
     exit 0

@@ -68,6 +68,14 @@ exit 1
 EOF
 chmod +x "$WORK/bin/sudo"
 
+# 假的 mdfind：FAKE_MDFIND 有值就回報它，否則什麼都沒找到。結果才不受這台機器的 Spotlight 影響。
+cat > "$WORK/bin/mdfind" <<'EOF'
+#!/bin/sh
+[ -n "${FAKE_MDFIND:-}" ] && printf '%s\n' "$FAKE_MDFIND"
+exit 0
+EOF
+chmod +x "$WORK/bin/mdfind"
+
 no_sudo_called() { [ ! -s "$SUDO_LOG" ]; }
 
 new_home() { mktemp -d "$WORK/home.XXXXXX"; }
@@ -316,6 +324,67 @@ EOF
   printf '%s' "$d"
 }
 
+# 下載「成功」但內容被換掉：sha256 對不上就不能裝。
+t_font_bad_hash() {
+  banner "font-bad-hash"
+  local h d; h="$(new_home)"; d="$(mktemp -d "$WORK/badcurl.XXXXXX")"
+  cat > "$d/curl" <<'EOF'
+#!/bin/sh
+url=""; out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  case "$a" in http*MesloLGS*) url="$a" ;; esac
+  prev="$a"
+done
+if [ -n "$url" ]; then printf 'not a font' > "$out"; exit 0; fi
+exec /usr/bin/curl "$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "假的字型沒有被裝上" '[ "$(fonts_count "$h")" = 0 ]'
+  check "輸出提到 sha256" 'out_has "sha256"'
+  check "結尾講 4 個字型沒裝到" 'out_has "4 個字型沒裝到"'
+}
+
+# 下載到一半按 Ctrl-C：不能留下 .part。真的 Ctrl-C 時，前景的 curl 和腳本會一起收到 SIGINT。
+t_ctrl_c_part() {
+  banner "ctrl-c-part"
+  local h d; h="$(new_home)"; d="$(mktemp -d "$WORK/intcurl.XXXXXX")"
+  cat > "$d/curl" <<'EOF'
+#!/bin/sh
+url=""; out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  case "$a" in http*MesloLGS*) url="$a" ;; esac
+  prev="$a"
+done
+if [ -n "$url" ]; then
+  printf 'half' > "$out"
+  kill -INT "$PPID"
+  kill -INT $$
+  exit 130
+fi
+exec /usr/bin/curl "$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "腳本中斷了（不是 exit 0）" '[ "$RC" -ne 0 ]'
+  check "沒有留下 .part" '[ -z "$(find "$h/Library/Fonts" -name "*.part" 2>/dev/null | head -1)" ]'
+}
+
+# iTerm2 被 MDM 裝在非標準位置：要靠 Spotlight 找到，不要再問要不要裝一份。
+t_iterm2_mdfind() {
+  banner "iterm2-mdfind"
+  if [ -d /Applications/iTerm.app ]; then skip "這台的 /Applications 已有 iTerm2，測不到 Spotlight 那條路"; return; fi
+  local h; h="$(new_home)"; mkdir -p "$h/mdm/iTerm.app" "$h/apps"
+  FAKE_MDFIND="$h/mdm/iTerm.app" run_notty "$h" --dry-run
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告認得 Spotlight 找到的 iTerm2" 'out_has "$h/mdm/iTerm.app"'
+  FAKE_MDFIND="$h/mdm/iTerm.app" ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --dry-run
+  check "ZSH_P10K_APPS_DIR 有設時不看 Spotlight" '! out_has "mdm/iTerm.app"'
+}
+
 # 重試用完還是失敗：結尾不能說字型裝好了，要講幾個沒裝到。
 t_font_all_fail() {
   banner "font-all-fail"
@@ -406,6 +475,7 @@ t_uninstall_hint() {
   check "exit 0" '[ "$RC" -eq 0 ]'
   check "沒有叫人 rm -rf ~/Library/Fonts" '! grep -qE "rm -rf .*Library/Fonts" "$OUT"'
   check "字型那行指名 MesloLGS NF" 'grep -E "Library/Fonts" "$OUT" | grep -q "MesloLGS"'
+  check "有提醒本來就有的字型要保留" 'out_has "之前就有"'
   check "沒有 getent 的錯誤" '! out_has "getent"'
   check "login shell 有值" 'grep -E "login shell 目前是 /" "$OUT" >/dev/null'
   check "刻意保留清單有 iTerm2 profile" 'out_has "zsh-p10k.json"'
@@ -510,6 +580,7 @@ t_iterm2_notty() {
 
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
 clean rerun existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
+font-bad-hash ctrl-c-part iterm2-mdfind
 brew-p10k-append brew-p10k-full brew-p10k-not-really
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
@@ -526,6 +597,9 @@ run_scenario() {
     uninstall-hint) t_uninstall_hint ;;
     font-retry)     t_font_retry ;;
     font-all-fail)  t_font_all_fail ;;
+    font-bad-hash)  t_font_bad_hash ;;
+    ctrl-c-part)    t_ctrl_c_part ;;
+    iterm2-mdfind)  t_iterm2_mdfind ;;
     font-partial-rerun) t_font_partial_rerun ;;
     brew-p10k-append) t_brew_p10k_append ;;
     brew-p10k-full) t_brew_p10k_full ;;
