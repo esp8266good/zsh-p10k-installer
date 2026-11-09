@@ -54,8 +54,16 @@ LOCAL_BIN="$LOCAL_PREFIX/bin"
 LOCAL_SRC="$LOCAL_PREFIX/src"
 # macOS 的使用者字型目錄是 ~/Library/Fonts，放進去就生效，不需要 fc-cache。
 # 這裡要直接看 uname，因為 --uninstall 在偵測之前就會用到這個值。
+case "$(uname -s)" in
+  MINGW*|MSYS*) IS_WINDOWS=1 ;;
+  *)            IS_WINDOWS=0 ;;
+esac
 if [ "$(uname -s)" = "Darwin" ]; then
   LOCAL_FONTS="$HOME/Library/Fonts"
+elif [ "$IS_WINDOWS" -eq 1 ]; then
+  # 每個使用者自己的字型目錄，不需要系統管理員權限。
+  LOCAL_FONTS="${LOCALAPPDATA:+$(cygpath -u "$LOCALAPPDATA")}"
+  LOCAL_FONTS="${LOCAL_FONTS:-$HOME/AppData/Local}/Microsoft/Windows/Fonts"
 else
   LOCAL_FONTS="$LOCAL_PREFIX/share/fonts/MesloLGS-NF"
 fi
@@ -73,6 +81,20 @@ ITERM2_URL="https://iterm2.com/downloads/stable/iTerm2-3_7_7.zip"
 ITERM2_SHA256="549eb2b21464d7f4606165e51c36a6b1a252ac9a79958228a240152412759da2"
 ITERM2_MIN_MACOS=13
 ZSH_BUILD_SHA256="36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81"
+
+# Windows（Git Bash）：Git for Windows 沒有 zsh，用 MSYS2 編好的套件，解開放在使用者目錄，
+# 不需要系統管理員權限，也不動 Program Files。
+# 套件是 zstd 壓縮的，Windows 10 內建的 tar 解不開（沒有 libzstd），所以另外帶 zstd 官方的 Windows 版。
+# sha256 都從兩個地方各下載一次核對過（2026-11-09）。要升級時版本和 hash 一起改。
+WIN_ZSH_PKG="zsh-5.9.2-1-x86_64.pkg.tar.zst"
+WIN_ZSH_SHA256="9a134200a152d90a0f1820d6aa74c3369d8539c068b523852549d74b16739fa8"
+WIN_ZSTD_NAME="zstd-v1.5.7-win64"
+WIN_ZSTD_URL="https://github.com/facebook/zstd/releases/download/v1.5.7/${WIN_ZSTD_NAME}.zip"
+WIN_ZSTD_SHA256="acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9"
+WIN_ZSH_PREFIX="$LOCAL_PREFIX/zsh-msys"
+WIN_ZSH_EXE="$WIN_ZSH_PREFIX/usr/bin/zsh.exe"
+# 寫在目前使用者的登錄檔，不需要系統管理員權限。ZSH_P10K_WIN_FONT_KEY 只給測試用。
+WIN_FONT_KEY="${ZSH_P10K_WIN_FONT_KEY:-HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts}"
 
 OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
 ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$OH_MY_ZSH_DIR/custom}"
@@ -703,6 +725,11 @@ detect_os() {
     if xcode-select -p >/dev/null 2>&1; then DET_MAC_CLT=1; else DET_MAC_CLT=0; fi
     return 0
   fi
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    DET_OS_ID="gitbash"
+    DET_OS_PRETTY="Windows Git Bash ($(uname -s))"
+    return 0
+  fi
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -739,6 +766,11 @@ detect_sudo() {
     DET_SUDO="no"
     return 0
   fi
+  # Windows 11 內建的 sudo.exe 是另一回事，叫它會跳 UAC 視窗。
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    DET_SUDO="no"
+    return 0
+  fi
   if ! has_command sudo; then
     DET_SUDO="no"
     return 0
@@ -769,6 +801,14 @@ detect_zsh() {
   if sys="$(find_system_zsh)"; then
     DET_ZSH_PATH="$sys"
     DET_ZSH_SOURCE="system"
+  elif [ "$IS_WINDOWS" -eq 1 ]; then
+    if [ -x "$WIN_ZSH_EXE" ]; then
+      DET_ZSH_PATH="$WIN_ZSH_EXE"
+      DET_ZSH_SOURCE="local-build"
+    else
+      DET_ZSH_PATH="（將下載 MSYS2 的 zsh 到 ~/.local/zsh-msys）"
+      DET_ZSH_SOURCE="msys"
+    fi
   elif [ -n "$DET_PKG_INSTALL" ] && [ "$DET_SUDO" != "no" ]; then
     DET_ZSH_PATH="（將由 $DET_PKG_MGR 安裝）"
     DET_ZSH_SOURCE="package"
@@ -788,7 +828,7 @@ detect_missing_packages() {
     has_command "$cmd" && continue
     # zsh 已經有系統版或自編版就不算缺
     if [ "$cmd" = "zsh" ]; then
-      case "$DET_ZSH_SOURCE" in system|local-build) continue ;; esac
+      case "$DET_ZSH_SOURCE" in system|local-build|msys) continue ;; esac
     fi
     # curl 缺但 wget 在，就不算缺
     if [ "$cmd" = "curl" ] && has_command wget; then
@@ -849,6 +889,10 @@ detect_desktop() {
     # Mac 一定有桌面，字型裝在這台上，坐在前面的人就用得到。
     DET_HAS_DESKTOP=1
     DET_DESKTOP_EVIDENCE="macOS"
+  fi
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    DET_HAS_DESKTOP=1
+    DET_DESKTOP_EVIDENCE="Windows"
   fi
   for d in /usr/share/xsessions /usr/share/wayland-sessions; do
     [ -d "$d" ] || continue
@@ -1032,6 +1076,7 @@ check_supported() {
   # 已經有 zsh 的機器一律支援，不管是什麼發行版。
   [ "$DET_ZSH_SOURCE" = "system" ] && return 0
   [ "$DET_ZSH_SOURCE" = "local-build" ] && return 0
+  [ "$DET_ZSH_SOURCE" = "msys" ] && return 0
 
   # 沒有 zsh，但認得套件管理器 → 支援
   [ "$DET_PKG_MGR" != "none" ] && return 0
@@ -1502,8 +1547,35 @@ build_zsh_locally() {
   ok "zsh 已編譯完成：$($LOCAL_BIN/zsh --version)"
 }
 
+# Windows：把 MSYS2 的 zsh 解開放在使用者目錄。
+# 先解到 .new 確認跑得起來才換上，中途失敗不會留下裝一半的 zsh。
+install_zsh_msys() {
+  local tmp new="$WIN_ZSH_PREFIX.new"
+  tmp="$(mktemp -d)"
+  info "下載 MSYS2 的 zsh（${WIN_ZSH_PKG}）"
+  fetch_verified "$tmp/zstd.zip" "$WIN_ZSTD_SHA256" "$WIN_ZSTD_URL"
+  fetch_verified "$tmp/zsh.tar.zst" "$WIN_ZSH_SHA256" \
+    "https://repo.msys2.org/msys/x86_64/$WIN_ZSH_PKG" \
+    "https://mirror.msys2.org/msys/x86_64/$WIN_ZSH_PKG"
+  unzip -q "$tmp/zstd.zip" -d "$tmp" || die "解不開 zstd 的壓縮檔。"
+  rm -rf "$new"
+  mkdir -p "$new"
+  "$tmp/$WIN_ZSTD_NAME/zstd.exe" -dc "$tmp/zsh.tar.zst" \
+    | tar -xf - -C "$new" --exclude=.BUILDINFO --exclude=.MTREE --exclude=.PKGINFO \
+    || die "解不開 zsh 的套件。"
+  rm -rf "$tmp"
+  "$new/usr/bin/zsh.exe" --version >/dev/null 2>&1 \
+    || die "解開的 zsh 跑不起來，可能是 Git for Windows 太舊。請更新 Git for Windows 之後再試。"
+  rm -rf "$WIN_ZSH_PREFIX"
+  mv "$new" "$WIN_ZSH_PREFIX"
+  DET_ZSH_PATH="$WIN_ZSH_EXE"
+  ok "zsh 已安裝：$DET_ZSH_PATH"
+}
+
 ensure_zsh() {
   case "$DET_ZSH_SOURCE" in
+    msys)
+      install_zsh_msys ;;
     system|local-build)
       info "使用既有的 zsh：$DET_ZSH_PATH" ;;
     package)
@@ -1542,7 +1614,8 @@ clone_or_update() {
     return 0
   fi
   info "安裝 $name"
-  git clone --depth=1 --quiet "$url" "$dir"
+  # Git for Windows 出廠的 core.autocrlf 是 true，換行變 CRLF 的 zsh 腳本會整個壞掉。
+  git clone -c core.autocrlf=false --depth=1 --quiet "$url" "$dir"
 }
 
 install_oh_my_zsh() {
@@ -1558,7 +1631,7 @@ install_oh_my_zsh() {
   info "安裝 oh-my-zsh"
   # 直接 git clone，不跑 oh-my-zsh 官方的 install.sh：那支預設會覆蓋 .zshrc，
   # 正是 v2 的錯誤。
-  git clone --depth=1 --quiet https://github.com/ohmyzsh/ohmyzsh.git "$OH_MY_ZSH_DIR"
+  git clone -c core.autocrlf=false --depth=1 --quiet https://github.com/ohmyzsh/ohmyzsh.git "$OH_MY_ZSH_DIR"
 }
 
 install_theme_and_plugins() {
@@ -1594,6 +1667,18 @@ install_p10k_template() {
 # 重試用完還是沒下載到的字型數，結尾要照實講。
 FONT_FAILED=0
 
+# Windows 的字型放進使用者字型目錄之後，還要登錄才看得到。只登錄真的存在的檔案。
+# MSYS_NO_PATHCONV：不然 Git Bash 會把 /v、/t、/d 當成路徑改寫掉。
+register_windows_fonts() {
+  local f name
+  for f in "$LOCAL_FONTS"/MesloLGS\ NF\ *.ttf; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .ttf)"
+    MSYS_NO_PATHCONV=1 reg add "$WIN_FONT_KEY" /v "$name (TrueType)" /t REG_SZ /d "$(cygpath -w "$f")" /f >/dev/null 2>&1 \
+      || warn "字型登錄失敗：$name"
+  done
+}
+
 install_fonts() {
   [ "$OPT_NO_FONTS" -eq 1 ] && return 0
   if [ "$DET_HAS_DESKTOP" -eq 0 ]; then
@@ -1610,6 +1695,10 @@ install_fonts() {
       "$base/MesloLGS%20NF%20${style}.ttf" || { warn "字型下載失敗：$name"; FONT_FAILED=$((FONT_FAILED + 1)); }
   done
   [ "$DET_IS_MACOS" -eq 1 ] && return 0
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    register_windows_fonts
+    return 0
+  fi
   has_command fc-cache && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || true
 }
 
@@ -1874,6 +1963,18 @@ EOS
 export PATH=$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH
 EOS
   fi
+
+  case "$DET_ZSH_PATH" in
+    "$WIN_ZSH_PREFIX"/*)
+      cat <<'EOS'
+
+# zsh 裝在使用者目錄，它內建的搜尋路徑（/usr/lib/zsh、/usr/share/zsh）在 Git Bash 裡不存在，要自己指。
+path=("$HOME/.local/zsh-msys/usr/bin" $path)
+module_path=("$HOME/.local/zsh-msys/usr/lib/zsh/$ZSH_VERSION" $module_path)
+fpath=("$HOME/.local/zsh-msys/usr/share/zsh/functions"/*(N/) $fpath)
+EOS
+      ;;
+  esac
 
   local tool
   for tool in "${DET_WHITELIST[@]:-}"; do
@@ -2272,6 +2373,15 @@ install_bash_profile_hook() {
 EOF
     chmod 600 "$HOME/.bash_profile"
   fi
+  # Git Bash 開的是 login shell，只有 .bashrc 的話，新生的 .bash_profile 要把它讀回來。
+  if [ "$IS_WINDOWS" -eq 1 ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.bash_login" ] && [ -f "$HOME/.bashrc" ]; then
+    info "這台沒有 ~/.bash_profile。新建的那份會先 source 你原本的 ~/.bashrc。"
+    cat > "$HOME/.bash_profile" <<'EOF'
+# 這個檔案由 install-zsh-p10k 建立。
+# login shell 不會自己讀 ~/.bashrc，下面這行把它讀回來。
+[ -f ~/.bashrc ] && . ~/.bashrc
+EOF
+  fi
   touch "$HOME/.bash_profile"
   if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
     # 先移除舊的再寫新的，路徑才會跟著更新
@@ -2448,6 +2558,11 @@ do_uninstall() {
     # ~/Library/Fonts 裡還有使用者自己的字型，絕對不能整個目錄刪掉。
     printf '  字型                  rm -f ~/Library/Fonts/MesloLGS\\ NF\\ *.ttf\n'
     printf '  iTerm2 profile        rm -f ~/Library/Application\\ Support/iTerm2/DynamicProfiles/zsh-p10k.json\n'
+  elif [ "$IS_WINDOWS" -eq 1 ]; then
+    # 使用者字型目錄裡還有別的字型，只能刪這四個。
+    printf '  字型                  到「設定 → 個人化 → 字型」移除 MesloLGS NF\n'
+    printf '  zsh                   rm -rf ~/.local/zsh-msys\n\n'
+    return 0
   else
     printf '  字型                  rm -rf %s\n' "$LOCAL_FONTS"
   fi
@@ -2462,6 +2577,21 @@ do_uninstall() {
 # ---------------------------------------------------------------------------
 
 print_font_guide() {
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    local win_head="字型：已經裝在這個 Windows 帳號，剩下把終端機的字型改成 MesloLGS NF"
+    [ "$FONT_FAILED" -gt 0 ] && win_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"
+    cat <<EOF
+
+${C_BOLD}${win_head}${C_RESET}
+
+    Git Bash 視窗     標題列按右鍵 → Options → Text → Font
+    Windows Terminal  設定 → Git Bash 的設定檔 → 外觀 → 字型
+    VS Code           settings.json 加 "terminal.integrated.fontFamily": "MesloLGS NF"
+
+  字型清單裡找不到的話，把終端機全部關掉重開；還是沒有就登出再登入一次。
+EOF
+    return 0
+  fi
   if [ "$DET_IS_MACOS" -eq 1 ]; then
     local font_head="字型：已經裝在這台 Mac 的 ~/Library/Fonts，剩下把終端機的字型改成 MesloLGS NF"
     [ "$FONT_FAILED" -gt 0 ] && font_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"

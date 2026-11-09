@@ -90,6 +90,19 @@ p10k 的圖示要 MesloLGS NF 字型，而且要裝在**你眼睛看著的那個
 新的 profile 叫「zsh-p10k (MesloLGS NF)」。要讓新視窗都用它：iTerm2 → Settings → Profiles，選它，按 Other Actions → Set as Default。
 不想要了就刪掉 `~/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json`。
 
+## Windows 10 / 11
+
+在 [Git for Windows](https://git-scm.com/downloads/win) 的 **Git Bash** 裡執行上面的安裝指令。
+**不需要 WSL、虛擬化，也不需要系統管理員權限。**
+
+| 情況 | 腳本怎麼處理 |
+|---|---|
+| zsh | Git Bash 沒有 zsh，腳本下載 MSYS2 編好的 zsh（核對 sha256），解開放在 `~/.local/zsh-msys` |
+| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
+| 字型 | 裝到這個 Windows 帳號的字型目錄並登錄，然後要自己把終端機字型改成 MesloLGS NF（結尾會教） |
+
+只支援 Git Bash。PowerShell 和 cmd 不會變成 zsh。
+
 ## 一次裝很多台
 
 ```bash
