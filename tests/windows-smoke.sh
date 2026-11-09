@@ -217,6 +217,19 @@ t_no_chsh_hint() {
   check "結尾有教手動進 zsh" 'out_has "手動進 zsh"'
 }
 
+# 使用者本來就有 .bash_profile：裝完、重跑、解除安裝之後要跟原檔每個 byte 都一樣。
+t_profile_restored() {
+  banner "profile-restored"
+  local h; h="$(new_home)"
+  printf 'export MINE=1\n\n# keep\n' > "$h/.bash_profile"
+  cp "$h/.bash_profile" "$WORK/profile.orig"
+  run_gb "$h"
+  run_gb "$h"
+  check "裝好有 hook" 'grep -q "zsh-p10k-install auto start" "$h/.bash_profile"'
+  run_gb "$h" --uninstall
+  check "解除安裝後與原檔相同" 'cmp -s "$WORK/profile.orig" "$h/.bash_profile"'
+}
+
 # Git Bash 的 login shell 優先讀 .bash_profile。只有 .bash_login 時，
 # 新生的 .bash_profile 會讓它失效。
 t_keep_bash_login() {
@@ -232,10 +245,11 @@ t_keep_bash_login() {
 t_rerun() {
   banner "rerun"
   ensure_clean_home
-  local h="$CLEAN_HOME" a b
-  a="$(sha_of "$h/.zshrc")"; b="$(sha_of "$h/.zshenv")"
+  local h="$CLEAN_HOME" a b p
+  a="$(sha_of "$h/.zshrc")"; b="$(sha_of "$h/.zshenv")"; p="$(sha_of "$h/.bash_profile")"
   run_gb "$h"
   check "第二次 exit 0" '[ "$RC" -eq 0 ]'
+  check ".bash_profile 沒變" '[ "$(sha_of "$h/.bash_profile")" = "$p" ]'
   check ".zshrc 沒變" '[ "$(sha_of "$h/.zshrc")" = "$a" ]'
   check ".zshenv 沒變" '[ "$(sha_of "$h/.zshenv")" = "$b" ]'
   check "用既有的 zsh，不重新下載" 'out_has "使用既有的 zsh"'
@@ -303,7 +317,7 @@ t_uninstall() {
 }
 
 ALL_SCENARIOS="dry-run clean rerun reg-fail no-fonts-claim no-chsh-hint uninstall
-keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash spaced-home nonascii-home"
+profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash spaced-home nonascii-home"
 
 run_scenario() {
   case "$1" in
@@ -318,6 +332,7 @@ run_scenario() {
     no-fonts-claim) t_no_fonts_claim ;;
     no-chsh-hint) t_no_chsh_hint ;;
     keep-bash-login) t_keep_bash_login ;;
+    profile-restored) t_profile_restored ;;
     bad-zsh-hash) t_bad_zsh_hash ;;
     spaced-home)  t_spaced_home ;;
     nonascii-home) t_nonascii_home ;;
