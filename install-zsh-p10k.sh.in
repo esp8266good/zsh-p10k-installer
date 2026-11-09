@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.3.1"
+SCRIPT_VERSION="3.4.0"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -2478,13 +2478,20 @@ EOF
 remove_hook() {
   [ -f "$HOME/.bash_profile" ] || return 0
   local tmp; tmp="$(mktemp)"
+  # 寫 hook 時前面會多一行空行當分隔，移除時要一起收掉，不然每重跑一次就多一行。
+  # 所以空行先扣著，看下一行是不是 hook 再決定要不要印。
   awk -v b="$HOOK_BEGIN" -v e="$HOOK_END" '
-    $0 == b { skip = 1 }
+    $0 == b { skip = 1; held = 0 }
     # v2 的舊 hook 也一併認得
-    /^# BEGIN USER LOCAL ZSH AUTO START$/ { skip = 1 }
-    !skip { print }
+    /^# BEGIN USER LOCAL ZSH AUTO START$/ { skip = 1; held = 0 }
+    !skip {
+      if (held) print ""
+      held = ($0 == "")
+      if (!held) print
+    }
     $0 == e { skip = 0 }
     /^# END USER LOCAL ZSH AUTO START$/ { skip = 0 }
+    END { if (held) print "" }
   ' "$HOME/.bash_profile" > "$tmp"
   if ! cmp -s "$HOME/.bash_profile" "$tmp"; then
     backup_file "$HOME/.bash_profile"

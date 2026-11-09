@@ -548,8 +548,11 @@ check "沒有把自己寫的 hook 抽進 .zshrc.local" \
 
 echo "--- 第二次安裝（應該沒有變動） ---"
 cp "$HOME/.zshrc" /tmp/zshrc.run1
+[ -f "$HOME/.bash_profile" ] && cp "$HOME/.bash_profile" /tmp/bash_profile.run1
 bash "$INSTALLER" -y > /tmp/run2.log 2>&1
 RC2=$?
+[ "$FIXTURE" = "hook-fallback" ] && \
+check "第二次沒有改動 .bash_profile"    'cmp -s /tmp/bash_profile.run1 "$HOME/.bash_profile"'
 check "第二次安裝結束碼為 0"            '[ "$RC2" -eq 0 ]'
 check "第二次沒有改動 .zshrc"           'cmp -s /tmp/zshrc.run1 "$HOME/.zshrc"'
 check "第二次回報「已經是最新狀態」"     'grep -q "已經是最新狀態" /tmp/run2.log'
