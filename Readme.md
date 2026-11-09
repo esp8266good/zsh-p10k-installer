@@ -84,11 +84,30 @@ p10k 的圖示要 MesloLGS NF 字型，而且要裝在**你眼睛看著的那個
 |---|---|
 | 沒有 Command Line Tools（git 一執行就跳安裝視窗） | 有 tty：問你要不要叫出 Apple 的安裝視窗，裝好就自動繼續。沒有 tty：說明要先跑 `xcode-select --install`，什麼都不改就結束 |
 | 字型 | 裝到 `~/Library/Fonts`，已經有同名檔案就不重下載 |
-| 沒有 iTerm2 | 問你要不要裝官方 3.7.7（核對 sha256 和簽章，放進 `/Applications`）。沒有 tty 就不裝 |
+| 沒有 iTerm2 | 問你要不要裝官方 3.7.7（核對 sha256 和簽章，放進 `/Applications`；那裡不能寫就放 `~/Applications`）。沒有 tty 就不裝 |
 | 有 iTerm2 | 問你要不要加一個字型設成 MesloLGS NF 的 profile。**不會改你原本的 profile**，也不會把它設成預設 |
 
 新的 profile 叫「zsh-p10k (MesloLGS NF)」。要讓新視窗都用它：iTerm2 → Settings → Profiles，選它，按 Other Actions → Set as Default。
 不想要了就刪掉 `~/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json`。
+
+macOS 的 login shell 會跑 `/etc/zprofile` 裡的 `path_helper`，它可能把 `~/.zshenv` 加的 PATH 排到系統路徑後面。
+遇到自己裝的指令被 `/usr/bin` 的同名指令蓋掉時，把那段 PATH 改寫到 `~/.zshrc.local`。
+
+## Windows 10 / 11
+
+在 [Git for Windows](https://git-scm.com/downloads/win) 的 **Git Bash** 裡執行上面的安裝指令。
+**不需要 WSL、虛擬化，也不需要系統管理員權限。**
+
+| 情況 | 腳本怎麼處理 |
+|---|---|
+| zsh | Git Bash 沒有 zsh，腳本下載 MSYS2 編好的 zsh（核對 sha256），解開放在 `~/.local/zsh-msys` |
+| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
+| 字型 | 裝到這個 Windows 帳號的字型目錄並登錄，然後要自己把終端機字型改成 MesloLGS NF（結尾會教） |
+
+只支援 Git Bash。PowerShell 和 cmd 不會變成 zsh。
+
+帳號名稱有中文之類的非 ASCII 字元時，zsh 和 p10k 能用，但開新視窗可能會印出 `zcompile` 的錯誤訊息：
+MSYS2 版 zsh 的 `zcompile` 寫不了這種路徑。腳本會在動手前警告。
 
 ## 一次裝很多台
 

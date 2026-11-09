@@ -22,7 +22,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable \
             -S warning dist/install-zsh-p10k.sh build.sh tests/run-fixtures.sh tests/incontainer.sh \
-            tests/macos-smoke.sh
+            tests/macos-smoke.sh tests/windows-smoke.sh
 
       # 打 tag 發版時，tag 必須跟腳本裡的 SCRIPT_VERSION 一致。
       # 不一致的話，使用者看到的「install-zsh-p10k v3.x.y」會跟 Release 頁面對不起來。
@@ -56,6 +56,9 @@ jobs:
           - ancient-awk
           - dotfiles-symlink
           - sticky-options
+          - font-fail
+          - external-p10k
+          - self-build
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -84,9 +87,29 @@ jobs:
       - name: smoke test
         run: bash ./tests/macos-smoke.sh
 
+  # Windows：在 Git Bash 裡跑，用暫存 HOME 和暫存的 LOCALAPPDATA，字型登錄寫在測試專用的機碼。
+  windows:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: dist
+      - name: smoke test
+        run: bash ./tests/windows-smoke.sh
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fixtures, macos]
+    needs: [fixtures, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

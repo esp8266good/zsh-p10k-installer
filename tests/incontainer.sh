@@ -281,6 +281,42 @@ EOF
       seed_extra_bashrc
       EXTRA_ARGS="--omz-update reminder --no-chsh"
       ;;
+    self-build)
+      # 沒有 zsh 也沒有 sudo：只剩自己編譯這條路。
+      # 映像裡的 apt 索引會過期，libc6-dev 拉到的 linux-libc-dev 舊版會 404，所以這裡要先更新。
+      sudo apt-get update -qq >/dev/null 2>&1
+      sudo apt-get install -y -qq --no-install-recommends gcc g++ libc6-dev make xz-utils >/dev/null 2>&1
+      sudo rm -f /usr/bin/sudo
+      export PATH="$HOME/.local/bin:$PATH"
+      seed_extra_bashrc
+      ;;
+    font-fail)
+      # 字型的網址一律失敗，重試用完之後結尾要講實話。
+      sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
+      seed_desktop
+      seed_extra_bashrc
+      mkdir -p /tmp/failcurl
+      cat > /tmp/failcurl/curl <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> /tmp/failcurl/args
+for a in "$@"; do
+  case "$a" in
+    http*MesloLGS*) echo "curl: (56) simulated failure" >&2; exit 56 ;;
+  esac
+done
+exec /usr/bin/curl "$@"
+EOF
+      chmod +x /tmp/failcurl/curl
+      export PATH="/tmp/failcurl:$PATH"
+      ;;
+    external-p10k)
+      # p10k 由 oh-my-zsh 以外的地方載入：不 clone 第二份，oh-my-zsh 也不能去找主題。
+      sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
+      mkdir -p "$HOME/brew"
+      printf 'typeset -g EXTERNAL_P10K=1\n' > "$HOME/brew/powerlevel10k.zsh-theme"
+      printf '# existing zshrc\nsource "$HOME/brew/powerlevel10k.zsh-theme"\n%s\n' "$SENTINEL" > "$HOME/.zshrc"
+      seed_extra_bashrc
+      ;;
     ancient-awk)
       # 這個 fixture 只在 debian:buster 映像上跑，那裡的 awk 是 mawk 1.3.3。
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
@@ -358,6 +394,14 @@ case "$FIXTURE" in
     check "login shell 維持 bash"       'getent passwd tester | grep -q "bash$"'
     check "報告事先講明 chsh 走不通"     'grep -q "chsh 走不通" /tmp/run1.log'
     ;;
+  self-build)
+    check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
+    check "報告講會自行編譯"            'grep -q "自行編譯" /tmp/run1.log'
+    check "zsh 編好放在 ~/.local/bin"   '[ -x "$HOME/.local/bin/zsh" ]'
+    check "編好的 zsh 載得起模組"       '[ "$("$HOME/.local/bin/zsh" -c "zmodload zsh/datetime && print ok")" = ok ]'
+    check "login shell 維持 bash"       'getent passwd tester | grep -q "bash$"'
+    check "改裝 hook"                   'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
+    ;;
   *)
     check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
     check "login shell 已改成 zsh"      'getent passwd tester | grep -q "zsh$"'
@@ -404,6 +448,20 @@ case "$FIXTURE" in
     check "判定為有桌面"                'grep -q "桌面環境        這台有" /tmp/run1.log'
     check "字型有安裝"                  '[ -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
     ;;
+  font-fail)
+    check "安裝照樣完成"                '[ "$RC1" -eq 0 ]'
+    check "沒有裝到字型檔"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.ttf" 2>/dev/null | head -1)" ]'
+    check "結尾講 4 個字型沒裝到"       'grep -q "4 個字型沒裝到" /tmp/run1.log'
+    check "下載先寫到 .part"            'grep -q "MesloLGS NF Regular.ttf.part" /tmp/failcurl/args'
+    check "沒有留下 .part"              '[ -z "$(find "$HOME/.local/share/fonts" -name "*.part" 2>/dev/null | head -1)" ]'
+    ;;
+  external-p10k)
+    check "報告說不另外 clone"          'grep -q "不另外 clone" /tmp/run1.log'
+    check "沒有多 clone 一份 p10k"      '[ ! -e "$HOME/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+    check "oh-my-zsh 不去找主題"        'grep -q "^ZSH_THEME=\"\"$" "$HOME/.zshrc"'
+    check "oh-my-zsh 沒抱怨找不到主題"  '! "$ZSH_BIN" -i -c exit 2>&1 | grep -q "not found"'
+    check "外部的 p10k 真的有載入"      '[ "$("$ZSH_BIN" -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
+    ;;
   forwarded-display)
     # DISPLAY 有值但機器沒有桌面。舊版就是在這裡把一台工作站判成「有圖形介面」的
     check "DISPLAY 有值不會騙過偵測"    'grep -q "桌面環境        沒有" /tmp/run1.log'
@@ -416,6 +474,14 @@ case "$FIXTURE" in
     check "新建的 .bash_profile 有 source .profile" \
           'grep -q "\. ~/.profile" "$HOME/.bash_profile"'
     check ".profile 的內容仍然生效"     'bash -lc "echo \$PROFILE_SENTINEL" | grep -q must-survive'
+    # zsh 裝了卻跑不起來時，hook 要留在 bash，不能讓人連 shell 都開不了。
+    # hook 會跳過 TERM=dumb，容器裡的 script 預設就是，所以要自己設。
+    login_in_tty() { TERM=xterm-256color timeout 15 script -qc 'bash -l -i -c "echo STILL_BASH"' /dev/null </dev/null 2>/dev/null; }
+    check "zsh 正常時 hook 會切過去"    '! login_in_tty | grep -q STILL_BASH'
+    sudo cp /usr/bin/zsh /tmp/zsh.real
+    printf '#!/bin/sh\nexit 1\n' | sudo tee /usr/bin/zsh >/dev/null
+    check "zsh 跑不起來時留在 bash"     'login_in_tty | grep -q STILL_BASH'
+    sudo cp /tmp/zsh.real /usr/bin/zsh
     ;;
   dotfiles-symlink)
     check ".zshrc 仍然是 symlink"       '[ -L "$HOME/.zshrc" ]'

@@ -68,6 +68,14 @@ exit 1
 EOF
 chmod +x "$WORK/bin/sudo"
 
+# 假的 mdfind：FAKE_MDFIND 有值就回報它，否則什麼都沒找到。結果才不受這台機器的 Spotlight 影響。
+cat > "$WORK/bin/mdfind" <<'EOF'
+#!/bin/sh
+[ -n "${FAKE_MDFIND:-}" ] && printf '%s\n' "$FAKE_MDFIND"
+exit 0
+EOF
+chmod +x "$WORK/bin/mdfind"
+
 no_sudo_called() { [ ! -s "$SUDO_LOG" ]; }
 
 new_home() { mktemp -d "$WORK/home.XXXXXX"; }
@@ -300,6 +308,176 @@ EOF
   check "有說在重試" 'out_has "重試"'
 }
 
+# 做一支假的 curl：網址符合 pattern 的一律失敗，其他照常。印出放它的目錄。
+failing_font_curl() {
+  local d; d="$(mktemp -d "$WORK/failcurl.XXXXXX")"
+  cat > "$d/curl" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    http*$1*) echo "curl: (56) Failure when receiving data from the peer（假裝斷線）" >&2; exit 56 ;;
+  esac
+done
+exec /usr/bin/curl "\$@"
+EOF
+  chmod +x "$d/curl"
+  printf '%s' "$d"
+}
+
+# 下載「成功」但內容被換掉：sha256 對不上就不能裝。
+t_font_bad_hash() {
+  banner "font-bad-hash"
+  local h d; h="$(new_home)"; d="$(mktemp -d "$WORK/badcurl.XXXXXX")"
+  cat > "$d/curl" <<'EOF'
+#!/bin/sh
+url=""; out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  case "$a" in http*MesloLGS*) url="$a" ;; esac
+  prev="$a"
+done
+if [ -n "$url" ]; then printf 'not a font' > "$out"; exit 0; fi
+exec /usr/bin/curl "$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "假的字型沒有被裝上" '[ "$(fonts_count "$h")" = 0 ]'
+  check "輸出提到 sha256" 'out_has "sha256"'
+  check "結尾講 4 個字型沒裝到" 'out_has "4 個字型沒裝到"'
+}
+
+# 下載到一半按 Ctrl-C：不能留下 .part。真的 Ctrl-C 時，前景的 curl 和腳本會一起收到 SIGINT。
+t_ctrl_c_part() {
+  banner "ctrl-c-part"
+  local h d; h="$(new_home)"; d="$(mktemp -d "$WORK/intcurl.XXXXXX")"
+  cat > "$d/curl" <<'EOF'
+#!/bin/sh
+url=""; out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  case "$a" in http*MesloLGS*) url="$a" ;; esac
+  prev="$a"
+done
+if [ -n "$url" ]; then
+  printf 'half' > "$out"
+  kill -INT "$PPID"
+  kill -INT $$
+  exit 130
+fi
+exec /usr/bin/curl "$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "腳本中斷了（不是 exit 0）" '[ "$RC" -ne 0 ]'
+  check "沒有留下 .part" '[ -z "$(find "$h/Library/Fonts" -name "*.part" 2>/dev/null | head -1)" ]'
+}
+
+# iTerm2 被 MDM 裝在非標準位置：要靠 Spotlight 找到，不要再問要不要裝一份。
+t_iterm2_mdfind() {
+  banner "iterm2-mdfind"
+  if [ -d /Applications/iTerm.app ]; then skip "這台的 /Applications 已有 iTerm2，測不到 Spotlight 那條路"; return; fi
+  local h; h="$(new_home)"; mkdir -p "$h/mdm/iTerm.app" "$h/apps"
+  FAKE_MDFIND="$h/mdm/iTerm.app" run_notty "$h" --dry-run
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告認得 Spotlight 找到的 iTerm2" 'out_has "$h/mdm/iTerm.app"'
+  FAKE_MDFIND="$h/mdm/iTerm.app" ZSH_P10K_APPS_DIR="$h/apps" run_notty "$h" --dry-run
+  check "ZSH_P10K_APPS_DIR 有設時不看 Spotlight" '! out_has "mdm/iTerm.app"'
+}
+
+# 重試用完還是失敗：結尾不能說字型裝好了，要講幾個沒裝到。
+t_font_all_fail() {
+  banner "font-all-fail"
+  local h d; h="$(new_home)"; d="$(failing_font_curl MesloLGS)"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0（字型失敗不讓整支腳本失敗）" '[ "$RC" -eq 0 ]'
+  check "一個字型都沒裝到" '[ "$(fonts_count "$h")" = 0 ]'
+  check "結尾講 4 個字型沒裝到" 'out_has "4 個字型沒裝到"'
+  check "結尾沒有說字型已經裝好" '! out_has "已經裝在這台 Mac"'
+}
+
+# 只有一個失敗：數字要對，而且照提示重跑一次真的會補上。
+t_font_partial_rerun() {
+  banner "font-partial-rerun"
+  local h d; h="$(new_home)"; d="$(failing_font_curl 'Bold%20Italic')"
+  PATH="$d:$PATH" run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "裝到三個" '[ "$(fonts_count "$h")" = 3 ]'
+  check "結尾講 1 個字型沒裝到" 'out_has "1 個字型沒裝到"'
+  run_notty "$h" --no-chsh
+  check "重跑 exit 0" '[ "$RC" -eq 0 ]'
+  check "重跑後四個都在" '[ "$(fonts_count "$h")" = 4 ]'
+  check "重跑後不再說沒裝到" '! out_has "個字型沒裝到"'
+  check "重跑後說字型已經裝好" 'out_has "已經裝在這台 Mac"'
+}
+
+# 寫一個假的 Homebrew p10k：被 source 時留下記號，才驗得到它真的有載入。
+seed_external_p10k() {
+  mkdir -p "$1/brew"
+  printf 'typeset -g EXTERNAL_P10K=1\n' > "$1/brew/powerlevel10k.zsh-theme"
+}
+
+# 已有 oh-my-zsh 設定、p10k 由 Homebrew 載入（附加模式）：不該再 clone 一份用不到的。
+t_brew_p10k_append() {
+  banner "brew-p10k-append"
+  local h; h="$(new_home)"; seed_external_p10k "$h"
+  cat > "$h/.zshrc" <<'EOF'
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git)
+source $ZSH/oh-my-zsh.sh
+source "$HOME/brew/powerlevel10k.zsh-theme"
+EOF
+  run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告是附加模式" 'out_has "附加模式"'
+  check "報告說不另外 clone" 'out_has "不另外 clone"'
+  check "沒有多 clone 一份 p10k" '[ ! -e "$h/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+  check "外部的 p10k 真的有載入" \
+    '[ "$(HOME="$h" TERM=xterm-256color zsh -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
+}
+
+# 沒有 oh-my-zsh、只有 source 外部 p10k（完整模式）：oh-my-zsh 不能再去找不存在的主題。
+t_brew_p10k_full() {
+  banner "brew-p10k-full"
+  local h err; h="$(new_home)"; seed_external_p10k "$h"
+  printf 'source "$HOME/brew/powerlevel10k.zsh-theme"\n' > "$h/.zshrc"
+  run_notty "$h" --no-chsh
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "報告是完整模式" 'out_has "完整模式"'
+  check "沒有多 clone 一份 p10k" '[ ! -e "$h/.oh-my-zsh/custom/themes/powerlevel10k" ]'
+  err="$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)"
+  check "oh-my-zsh 沒抱怨找不到主題" '! printf "%s" "$err" | grep -q "not found"'
+  check "外部的 p10k 真的有載入" \
+    '[ "$(HOME="$h" TERM=xterm-256color zsh -i -c "print -r -- \$EXTERNAL_P10K" 2>/dev/null | tail -1)" = 1 ]'
+}
+
+# 這兩種看起來像外部載入，其實不是，p10k 還是要 clone。dry-run 看報告就夠了。
+t_brew_p10k_not_really() {
+  banner "brew-p10k-not-really"
+  local h; h="$(new_home)"
+  printf '# source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "註解掉的 source 不算" '! out_has "不另外 clone"'
+  h="$(new_home)"
+  cat > "$h/.zshrc" <<'EOF'
+ZSH_THEME="powerlevel10k/powerlevel10k"
+source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
+EOF
+  run_notty "$h" --dry-run
+  check "ZSH_THEME 還指著 clone 的路徑就要 clone" '! out_has "不另外 clone"'
+  # 跨機器共用的 dotfiles：這台沒有 Homebrew，那行 source 根本不會生效。
+  h="$(new_home)"
+  printf '[[ -r /opt/nowhere/powerlevel10k.zsh-theme ]] && source /opt/nowhere/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "source 的檔案不存在就要 clone" '! out_has "不另外 clone"'
+  # 路徑要跑指令才知道：沒辦法判斷，相信使用者寫的。
+  h="$(new_home)"
+  printf 'source $(brew --prefix)/share/powerlevel10k/powerlevel10k.zsh-theme\n' > "$h/.zshrc"
+  run_notty "$h" --dry-run
+  check "路徑解析不了時相信使用者" 'out_has "不另外 clone"'
+}
+
 t_uninstall_hint() {
   banner "uninstall-hint"
   local h; h="$(new_home)"
@@ -307,6 +485,7 @@ t_uninstall_hint() {
   check "exit 0" '[ "$RC" -eq 0 ]'
   check "沒有叫人 rm -rf ~/Library/Fonts" '! grep -qE "rm -rf .*Library/Fonts" "$OUT"'
   check "字型那行指名 MesloLGS NF" 'grep -E "Library/Fonts" "$OUT" | grep -q "MesloLGS"'
+  check "有提醒本來就有的字型要保留" 'out_has "之前就有"'
   check "沒有 getent 的錯誤" '! out_has "getent"'
   check "login shell 有值" 'grep -E "login shell 目前是 /" "$OUT" >/dev/null'
   check "刻意保留清單有 iTerm2 profile" 'out_has "zsh-p10k.json"'
@@ -410,7 +589,9 @@ t_iterm2_notty() {
 }
 
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
-clean rerun existing-setup uninstall-hint font-retry
+clean rerun existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
+font-bad-hash ctrl-c-part iterm2-mdfind
+brew-p10k-append brew-p10k-full brew-p10k-not-really
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
 
 run_scenario() {
@@ -425,6 +606,14 @@ run_scenario() {
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;
     font-retry)     t_font_retry ;;
+    font-all-fail)  t_font_all_fail ;;
+    font-bad-hash)  t_font_bad_hash ;;
+    ctrl-c-part)    t_ctrl_c_part ;;
+    iterm2-mdfind)  t_iterm2_mdfind ;;
+    font-partial-rerun) t_font_partial_rerun ;;
+    brew-p10k-append) t_brew_p10k_append ;;
+    brew-p10k-full) t_brew_p10k_full ;;
+    brew-p10k-not-really) t_brew_p10k_not_really ;;
     profile-yes)    t_profile_yes ;;
     profile-keep)   t_profile_keep ;;
     profile-notty)  t_profile_notty ;;
