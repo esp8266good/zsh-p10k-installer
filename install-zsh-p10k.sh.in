@@ -1429,15 +1429,27 @@ on_interrupt() {
 }
 
 download_to() {
-  local out="$1" url="$2" part="$1.part" try=1
+  local out="$1" url="$2" part="$1.part" try=1 here="$PWD" dir base rc
+  # Git Bash 的 curl 是原生 Windows 程式，路徑有字碼頁以外的字元（例如帳號名稱）就寫不了檔。
+  # 先 cd 過去，只給它不含帳號名稱的檔名。不用 subshell：Ctrl-C 的 trap 要在這個 shell 裡跑。
+  dir="$(dirname "$out")"
+  base="$(basename "$part")"
   DOWNLOAD_PART="$part"
   while :; do
+    rc=0
+    cd "$dir" || return 1
     if has_command curl; then
-      curl -fsSL --connect-timeout 20 -o "$part" "$url" && { mv "$part" "$out"; return 0; }
+      curl -fsSL --connect-timeout 20 -o "$base" "$url" || rc=$?
     elif has_command wget; then
-      wget -q -T 20 -O "$part" "$url" && { mv "$part" "$out"; return 0; }
+      wget -q -T 20 -O "$base" "$url" || rc=$?
     else
+      cd "$here"
       die "curl 與 wget 都沒有，無法下載：$url"
+    fi
+    cd "$here"
+    if [ "$rc" -eq 0 ]; then
+      mv "$part" "$out"
+      return 0
     fi
     rm -f "$part"
     [ "$try" -ge "$DOWNLOAD_TRIES" ] && return 1

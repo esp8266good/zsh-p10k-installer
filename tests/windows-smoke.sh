@@ -151,9 +151,10 @@ t_spaced_home() {
 
 # 中文帳號：MSYS2 版 zsh 的 zcompile 寫不了這種路徑，p10k 會印錯誤。
 # 要驗的是事前有講，而且 zsh 和 p10k 還是能用。
+# 路徑混了中文和泰文：不管這台 Windows 用哪個字碼頁，都一定有字元不在字碼頁裡。
 t_nonascii_home() {
   banner "nonascii-home"
-  local h="$WORK/使用者"
+  local h="$WORK/使用者ผู้ใช้"
   mkdir -p "$h"
   run_gb "$h"
   check "exit 0" '[ "$RC" -eq 0 ]'
