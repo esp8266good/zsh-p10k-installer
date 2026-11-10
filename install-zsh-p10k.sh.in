@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.4.1"
+SCRIPT_VERSION="3.5.0"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -98,6 +98,21 @@ WIN_ZSH_PREFIX="$LOCAL_PREFIX/zsh-msys"
 WIN_ZSH_EXE="$WIN_ZSH_PREFIX/usr/bin/zsh.exe"
 # 寫在目前使用者的登錄檔，不需要系統管理員權限。ZSH_P10K_WIN_FONT_KEY 只給測試用。
 WIN_FONT_KEY="${ZSH_P10K_WIN_FONT_KEY:-HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts}"
+
+# `zsh-p10k update` 從這裡抓最新的腳本和 SHA256SUMS。
+RELEASE_URL="https://github.com/esp8266good/zsh-p10k-installer/releases/latest/download"
+UPDATE_CMD="$LOCAL_BIN/zsh-p10k"
+UPDATE_CMD_MARK="# zsh-p10k-install: update command"
+
+# Windows Terminal 的 fragment：只加一個新的設定檔，不碰使用者的 settings.json。
+# GUID 是照 Windows Terminal 文件的 v5 UUID 算法（app 名稱、設定檔名稱都用 UTF-16LE）算好寫死的，
+# 改了 app 資料夾名稱或設定檔名稱就要重算。
+WT_APP_DIR="zsh-p10k-install"
+WT_PROFILE_NAME="Git Bash (zsh)"
+WT_PROFILE_GUID="{ad4e1882-2152-55a3-950c-b935933e73df}"
+WT_FRAGMENT=""
+[ "$IS_WINDOWS" -eq 1 ] && WT_FRAGMENT="${LOCALAPPDATA:+$(cygpath -u "$LOCALAPPDATA")}"
+WT_FRAGMENT="${WT_FRAGMENT:-$HOME/AppData/Local}/Microsoft/Windows Terminal/Fragments/$WT_APP_DIR/zsh-p10k.json"
 
 OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
 ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$OH_MY_ZSH_DIR/custom}"
@@ -183,6 +198,8 @@ install-zsh-p10k.sh：zsh + oh-my-zsh + Powerlevel10k 安裝器
 
   --yes, -y             不等待確認，直接執行
   --help, -h            顯示這段說明
+
+  裝好之後要更新：在 zsh 裡打 zsh-p10k update（下載最新版、核對 sha256、沿用上次的選項重跑）
 USAGE
 }
 
@@ -1237,6 +1254,10 @@ print_report() {
         ;;
     esac
   fi
+  printf '  ~/.local/bin/zsh-p10k   之後打 zsh-p10k update 就會下載最新版、核對 sha256 後重跑\n'
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    printf '  Windows Terminal        加一個「%s」設定檔（字型有裝就設成 MesloLGS NF）；不動你的 settings.json\n' "$WT_PROFILE_NAME"
+  fi
   printf '\n'
 
   printf '%s要安裝的東西%s\n' "$C_BOLD" "$C_RESET"
@@ -1478,14 +1499,24 @@ download_to() {
   done
 }
 
+# 印出檔案的 sha256；算不出來（沒有工具，或工具讀檔失敗）就回 1、什麼都不印。
+# 先把工具的輸出存起來、檢查是 64 位 hex 才印：直接接 | cut 的話，讀檔失敗時
+# 會被當成「沒有 sha256sum」或印出空的 hash。
 file_sha256() {
+  local out=""
   if has_command sha256sum; then
-    sha256sum "$1" | cut -d' ' -f1
+    out="$(sha256sum "$1")" || return 1
   elif has_command shasum; then
-    shasum -a 256 "$1" | cut -d' ' -f1
+    out="$(shasum -a 256 "$1")" || return 1
   else
     return 1
   fi
+  out="${out%% *}"
+  case "$out" in
+    *[!0-9a-f]*|'') return 1 ;;
+  esac
+  [ "${#out}" -eq 64 ] || return 1
+  printf '%s\n' "$out"
 }
 
 # 下載原始碼並核對 sha256。後面的網址依序試，前一個下載失敗才換下一個。
@@ -1499,7 +1530,7 @@ fetch_verified() {
     case "$rc" in
       0) return 0 ;;
       2) die "$out 的 sha256 對不上（預期 ${sha}，實際 ${DOWNLOAD_GOT}）。不使用來路不明的檔案。" ;;
-      3) die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。" ;;
+      3) die "算不出 ${out} 的 sha256（沒有 sha256sum / shasum，或讀不了這個檔），無法核對。" ;;
     esac
   done
   [ -n "$FETCH_FAIL_HINT" ] && err "$FETCH_FAIL_HINT"
@@ -1519,7 +1550,7 @@ fetch_verified_soft() {
     case "$rc" in
       0) return 0 ;;
       2) warn "$out 的 sha256 對不上（預期 ${sha}，實際 ${DOWNLOAD_GOT}）。不安裝來路不明的檔案。"; return 1 ;;
-      3) warn "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; return 1 ;;
+      3) warn "算不出 ${out} 的 sha256（沒有 sha256sum / shasum，或讀不了這個檔），無法核對。"; return 1 ;;
     esac
   done
   warn "下載失敗：$*"
@@ -2140,6 +2171,16 @@ EOS
     esac
   done
 
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    cat <<'EOS'
+
+# macOS 的 /etc/zprofile（path_helper）會把上面這些目錄排到 /usr/bin 後面。
+# 先記下來，~/.zshrc 的 head 區段再把它們排回前面。只記家目錄底下的，不 export。
+typeset -ga _zsh_p10k_env_path
+_zsh_p10k_env_path=(${(M)path:#$HOME/*})
+EOS
+  fi
+
   printf '%s\n' "$BLOCK_ENV_END"
 }
 
@@ -2174,7 +2215,7 @@ gen_head_block() {
 # 這個區段由 install-zsh-p10k 產生，重跑安裝腳本時會被整段覆寫。
 # 想加自己的設定，請寫在這兩個標記「之外」，或寫進 ~/.zshrc.local。
 #
-# PATH 與 typeset -U 不在這裡，在 ~/.zshenv 的 env 區段。
+# PATH 與 typeset -U 不在這裡，在 ~/.zshenv 的 env 區段（macOS 例外，見下面 path_helper 那段）。
 # ~/.zshenv 一定比 ~/.zshrc 先讀，而且非互動 shell 也讀得到，所以放這裡是多的。
 EOS
 
@@ -2200,6 +2241,18 @@ EOS
 # 但如果有人用 `zsh -i -c ...` 之類的方式跑自動化，它就派得上用場。
 # 非互動 shell 需要的 PATH 在 ~/.zshenv 裡，那個檔案每次啟動都會讀到。
 [[ -o interactive ]] || return
+EOS
+  fi
+
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    cat <<'EOS'
+
+# macOS 開新視窗是 login shell，/etc/zprofile 的 path_helper 會把 ~/.zshenv 加的目錄
+# 排到 /usr/bin 後面，~/.local/bin 裡自己裝的指令就被系統的同名指令蓋掉。
+# 這裡只把 ~/.zshenv 讀完時就在的家目錄底下的目錄（_zsh_p10k_env_path）排回最前面；
+# ~/.zprofile 之後才加的、系統目錄（含 Homebrew）的順序都不動。
+typeset -U path PATH
+(( ${+_zsh_p10k_env_path} )) && path=($_zsh_p10k_env_path $path)
 EOS
   fi
 
@@ -2329,6 +2382,33 @@ EOS
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 EOS
   fi
+
+  cat <<'EOS'
+
+# VS Code 的終端機：bash 被 ~/.bash_profile 的 hook 換成 zsh 時，VS Code 來不及注入 zsh 的
+# shell integration（指令偵測、結束碼、目前目錄）。照 VS Code 文件的手動安裝方式補上。
+# `code --locate-shell-integration-path` 要啟動 Node.js，所以路徑記在快取檔，檔案還在就不再問。
+# 不包成函式：VS Code 的腳本要在最外層 source，裡面宣告的變數才不會變成 local。
+# VS Code 直接開 zsh 時會自己注入：那時 VSCODE_ZDOTDIR 已經設好，VSCODE_SHELL_INTEGRATION 則被
+# p10k 收走（改記在 __p9k_force_term_shell_integration）。這兩種都不再載一次。
+# VSCODE_INJECTION 是 bash 那邊留下來的，zsh 這邊根本沒注入；不清掉的話 VS Code 的腳本會把
+# HISTFILE 改成 $USER_ZDOTDIR/.zsh_history，也就是 /.zsh_history。
+if [[ -o interactive && "$TERM_PROGRAM" == "vscode" && -z "${VSCODE_SHELL_INTEGRATION:-}" && -z "${VSCODE_ZDOTDIR:-}" ]] \
+   && (( ! ${+__p9k_force_term_shell_integration} && $+commands[code] )); then
+  unset VSCODE_INJECTION
+  _zp10k_vsc_cache="${XDG_CACHE_HOME:-$HOME/.cache}/zsh-p10k-vscode-integration"
+  _zp10k_vsc_path=""
+  [[ -r "$_zp10k_vsc_cache" ]] && _zp10k_vsc_path="$(<"$_zp10k_vsc_cache")"
+  if [[ ! -r "$_zp10k_vsc_path" ]]; then
+    _zp10k_vsc_path="$(code --locate-shell-integration-path zsh 2>/dev/null)"
+    # Windows 的 code 回的是 c:\... 路徑：zsh 的 [[ -r ]] 認得，`.` 卻讀不到，要先轉成 /c/...。
+    (( $+commands[cygpath] )) && [[ -n "$_zp10k_vsc_path" ]] && _zp10k_vsc_path="$(cygpath -u "$_zp10k_vsc_path")"
+    [[ -r "$_zp10k_vsc_path" ]] && { mkdir -p "${_zp10k_vsc_cache:h}" && print -r -- "$_zp10k_vsc_path" >| "$_zp10k_vsc_cache"; } 2>/dev/null
+  fi
+  [[ -r "$_zp10k_vsc_path" ]] && . "$_zp10k_vsc_path"
+  unset _zp10k_vsc_cache _zp10k_vsc_path
+fi
+EOS
 
   printf '%s\n' "$BLOCK_TAIL_END"
 }
@@ -2513,8 +2593,9 @@ change_login_shell() {
 install_bash_profile_hook() {
   [ "$DET_NEED_HOOK" -eq 1 ] || return 0
 
-  local target="$DET_ZSH_PATH"
+  local target="$DET_ZSH_PATH" existed=0
   [ -x "$target" ] || return 0
+  [ -f "$HOME/.bash_profile" ] && existed=1
 
   # bash 的 login shell 只會讀 .bash_profile / .bash_login / .profile 之中「第一個
   # 存在的」。所以在只有 .profile 的機器上憑空生一個 .bash_profile，
@@ -2557,6 +2638,9 @@ EOF
     ok "~/.bash_profile 的 auto-start hook 已經是最新的（指向 ${target}）"
     return 0
   fi
+  # 本來就有的 .bash_profile 先放進還原點，--rollback 才還原得了 hook。
+  # 這次才新建的不備份：沒有東西被覆蓋，就不該多出一個還原點。
+  [ "$existed" -eq 1 ] && backup_file "$HOME/.bash_profile"
   if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
     # 先移除舊的再寫新的，路徑才會跟著更新
     remove_hook
@@ -2583,11 +2667,11 @@ gen_hook_block() {
   cat <<EOF
 $HOOK_BEGIN
 # 只在「互動式、有 tty、不是 agent/CI」的 login shell 裡切換到 zsh。
-# 設 DISABLE_AUTO_ZSH=1 可以繞過。
+# 設 DISABLE_AUTO_ZSH=1 可以繞過。VS Code 的終端機也會切（VS Code 讀 shell 環境那次不切）。
 if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
    && [ -t 0 ] && [ -t 1 ] && case "\$-" in *i*) true ;; *) false ;; esac \\
    && [ -z "\$CI" ] && [ -z "\$GITHUB_ACTIONS" ] && [ -z "\$CODESPACES" ] \\
-   && [ -z "\$VSCODE_PID" ] && [ "\${TERM:-}" != "dumb" ] \\
+   && [ -z "\$VSCODE_RESOLVING_ENVIRONMENT" ] && [ "\${TERM:-}" != "dumb" ] \\
    && "$target" -fc : >/dev/null 2>&1; then
   export SHELL="$target"
   exec "$target" -l
@@ -2621,6 +2705,200 @@ remove_hook() {
   else
     rm -f "$tmp"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# zsh-p10k 指令（zsh-p10k update）
+#
+# 放成一支 bash 檔案，不做成 zsh function：zsh 設定壞掉時也能在 bash 裡跑它來修。
+# ~/.local/bin 在 ~/.zshenv 的 PATH 裡，所以 zsh 裡直接打得到。
+# ---------------------------------------------------------------------------
+
+gen_update_command() {
+  cat <<EOF
+#!/usr/bin/env bash
+$UPDATE_CMD_MARK
+# 由 install-zsh-p10k $SCRIPT_VERSION 寫入，重跑安裝腳本時會被覆寫，--uninstall 會刪掉。
+#
+#   zsh-p10k update [安裝腳本的參數]   下載最新版的安裝腳本，核對 sha256 後重跑
+#                                     （帶 --update，沿用上次安裝時的選項）
+#   zsh-p10k version                  印出目前裝的是哪一版
+set -euo pipefail
+INSTALLED_VERSION="$SCRIPT_VERSION"
+# ZSH_P10K_RELEASE_URL 只給測試用。
+RELEASE_URL="\${ZSH_P10K_RELEASE_URL:-$RELEASE_URL}"
+EOF
+  cat <<'EOF'
+
+usage() {
+  cat <<'USAGE'
+用法：
+  zsh-p10k update [安裝腳本的參數]   下載最新版的安裝腳本，核對 sha256 後重跑
+                                    （帶 --update，沿用上次安裝時的選項；例如 zsh-p10k update -y）
+  zsh-p10k version                  印出目前裝的是哪一版
+USAGE
+}
+
+sha_of() {
+  local out
+  if command -v sha256sum >/dev/null 2>&1; then
+    out="$(sha256sum "$1")" || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    out="$(shasum -a 256 "$1")" || return 1
+  else
+    return 1
+  fi
+  printf '%s\n' "${out%% *}"
+}
+
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 20 -o "$1" "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 20 -O "$1" "$2"
+  else
+    echo "curl 與 wget 都沒有，無法下載。" >&2; return 1
+  fi
+}
+
+TMP_DIR=""
+# Windows 刪不了自己所在的目錄，所以先 cd 出來。
+cleanup() { [ -n "$TMP_DIR" ] && cd / && rm -rf "$TMP_DIR"; }
+
+do_update() {
+  local rc=0 want got latest
+  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zsh-p10k-update.XXXXXX")"
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM
+  # 先 cd 進去、只給相對檔名：Git Bash 的 curl 是原生 Windows 程式，
+  # 暫存目錄路徑有帳號名稱這類字碼頁以外的字元時寫不了檔。
+  cd "$TMP_DIR"
+  echo "下載最新版的安裝腳本：$RELEASE_URL"
+  if ! fetch install-zsh-p10k.sh "$RELEASE_URL/install-zsh-p10k.sh" \
+     || ! fetch SHA256SUMS "$RELEASE_URL/SHA256SUMS"; then
+    echo "下載失敗。檢查網路之後再跑一次 zsh-p10k update。" >&2
+    return 1
+  fi
+  want="$(awk '$2 == "install-zsh-p10k.sh" || $2 == "*install-zsh-p10k.sh" { print $1; exit }' SHA256SUMS)"
+  got="$(sha_of install-zsh-p10k.sh)" || { echo "算不出下載檔的 sha256（沒有 sha256sum / shasum？），不執行。" >&2; return 1; }
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    echo "sha256 對不上（SHA256SUMS 寫 ${want:-（沒有這個檔名）}，下載到的是 ${got}）。不執行來路不明的腳本。" >&2
+    return 1
+  fi
+  echo "sha256 核對通過。"
+  latest="$(sed -n 's/^SCRIPT_VERSION="\(.*\)"$/\1/p' install-zsh-p10k.sh | head -1)"
+  echo "目前 $INSTALLED_VERSION → 最新 ${latest:-（看不出版本）}"
+  # 要在暫存目錄還在的時候跑完，所以不用 exec。
+  bash install-zsh-p10k.sh --update "$@" || rc=$?
+  return "$rc"
+}
+
+case "${1:-}" in
+  update) shift; do_update "$@" ;;
+  version|--version|-V) echo "install-zsh-p10k $INSTALLED_VERSION" ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
+EOF
+}
+
+install_update_command() {
+  local new
+  new="$(mktemp)"
+  gen_update_command > "$new"
+  if [ -f "$UPDATE_CMD" ] && cmp -s "$UPDATE_CMD" "$new"; then
+    rm -f "$new"
+    return 0
+  fi
+  # 同名的檔案不是我們寫的就不蓋掉。
+  if [ -e "$UPDATE_CMD" ] && ! file_has "$UPDATE_CMD" "$UPDATE_CMD_MARK"; then
+    rm -f "$new"
+    warn "$UPDATE_CMD 已經有別的東西，不覆蓋。zsh-p10k update 這個指令就不裝了。"
+    return 0
+  fi
+  mkdir -p "$LOCAL_BIN"
+  mv "$new" "$UPDATE_CMD"
+  chmod 755 "$UPDATE_CMD"
+  ok "已寫入 ~/.local/bin/zsh-p10k（之後要更新就打 zsh-p10k update）"
+}
+
+remove_update_command() {
+  [ -f "$UPDATE_CMD" ] && file_has "$UPDATE_CMD" "$UPDATE_CMD_MARK" || return 0
+  rm -f "$UPDATE_CMD"
+  info "已移除 ~/.local/bin/zsh-p10k"
+}
+
+# ---------------------------------------------------------------------------
+# Windows Terminal 的「Git Bash (zsh)」設定檔
+# ---------------------------------------------------------------------------
+
+# JSON 字串：反斜線和雙引號跳脫。這裡的值不會有控制字元。
+json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '"%s"' "$s"
+}
+
+# 印出 fragment 內容；zsh 的路徑沒辦法安全放進 commandline 時回 1。
+gen_wt_fragment() {
+  local root zsh_ref cmd icon="" d
+  root="$(cygpath -w /)"; root="${root%\\}"
+  # Git 的圖示：新版放在 ucrt64，舊版在 mingw64，ARM 版在 clangarm64。
+  for d in ucrt64 mingw64 clangarm64; do
+    if [ -f "/$d/share/git/git-for-windows.ico" ]; then
+      icon="$root\\$d\\share\\git\\git-for-windows.ico"
+      break
+    fi
+  done
+  # 家目錄底下的 zsh 寫成 ~/...：bash 會展開 ~，展開的結果不會再被空白切開，
+  # 帳號名稱有空白或中文都沒事，JSON 裡也不必寫出帳號名稱。
+  case "$DET_ZSH_PATH" in
+    "$HOME"/*) zsh_ref="~/${DET_ZSH_PATH#"$HOME"/}" ;;
+    *)         zsh_ref="$DET_ZSH_PATH" ;;
+  esac
+  case "$zsh_ref" in
+    *[!A-Za-z0-9_./~+-]*) return 1 ;;
+  esac
+  # 走 Git 的 bin\bash.exe：它會把 Git Bash 的環境（PATH、MSYSTEM）設好。-l 讀 /etc/profile 和 ~/.bash_profile；
+  # -c 不是互動式，所以 ~/.bash_profile 的 hook 不會插手，--no-chsh 時這個設定檔照樣進得了 zsh。
+  cmd="\"$root\\bin\\bash.exe\" -l -c \"SHELL=$zsh_ref exec $zsh_ref -l\""
+  printf '{\n  "profiles": [\n    {\n'
+  printf '      "guid": %s,\n' "$(json_str "$WT_PROFILE_GUID")"
+  printf '      "name": %s,\n' "$(json_str "$WT_PROFILE_NAME")"
+  printf '      "commandline": %s,\n' "$(json_str "$cmd")"
+  [ -n "$icon" ] && printf '      "icon": %s,\n' "$(json_str "$icon")"
+  # 字型沒裝到就不指定，不然 Windows Terminal 每次開都會跳「找不到字型」。
+  [ -f "$LOCAL_FONTS/MesloLGS NF Regular.ttf" ] && printf '      "font": { "face": "MesloLGS NF" },\n'
+  printf '      "startingDirectory": "%%USERPROFILE%%"\n'
+  printf '    }\n  ]\n}\n'
+}
+
+WT_PROFILE_WRITTEN=0
+install_wt_profile() {
+  [ "$IS_WINDOWS" -eq 1 ] || return 0
+  local new
+  new="$(mktemp)"
+  if ! gen_wt_fragment > "$new"; then
+    rm -f "$new"
+    warn "zsh 的路徑（${DET_ZSH_PATH}）有特殊字元，Windows Terminal 的設定檔就不加了。"
+    return 0
+  fi
+  WT_PROFILE_WRITTEN=1
+  if [ -f "$WT_FRAGMENT" ] && cmp -s "$WT_FRAGMENT" "$new"; then
+    rm -f "$new"
+    return 0
+  fi
+  mkdir -p "$(dirname "$WT_FRAGMENT")"
+  mv "$new" "$WT_FRAGMENT"
+  ok "已寫入 Windows Terminal 的「${WT_PROFILE_NAME}」設定檔（沒有動你的 settings.json）"
+}
+
+remove_wt_profile() {
+  [ -n "$WT_FRAGMENT" ] && [ -f "$WT_FRAGMENT" ] || return 0
+  rm -f "$WT_FRAGMENT"
+  rmdir "$(dirname "$WT_FRAGMENT")" 2>/dev/null || true
+  info "已移除 Windows Terminal 的「${WT_PROFILE_NAME}」設定檔"
 }
 
 # ---------------------------------------------------------------------------
@@ -2717,6 +2995,10 @@ do_rollback() {
 
   printf '\n'
   info "還原前的狀態存在 ${RESTORE_POINT:-（沒有東西需要備份）}"
+  # .bash_profile 是安裝時才新建的話，還原點裡沒有它，hook 會留著。
+  if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
+    warn "~/.bash_profile 裡還有自動切到 zsh 的 hook（這個檔案是安裝時才建的，還原點裡沒有）。要拿掉請跑 --uninstall。"
+  fi
   printf '  開一個新的終端機視窗才會看到還原後的設定。\n\n'
 }
 
@@ -2739,6 +3021,8 @@ do_uninstall() {
   done
 
   remove_hook
+  remove_update_command
+  remove_wt_profile
 
   if [ -f "$STATE_FILE" ]; then
     rm -f "$STATE_FILE"
@@ -2779,12 +3063,17 @@ print_font_guide() {
     local win_head="字型：已經裝在這個 Windows 帳號，剩下把終端機的字型改成 MesloLGS NF"
     [ "$FONT_FAILED" -gt 0 ] && win_head="字型：還沒裝齊，重跑一次補上之後，再把終端機的字型改成 MesloLGS NF"
     [ "$OPT_NO_FONTS" -eq 1 ] && win_head="字型：依 --no-fonts 略過安裝。要看到 p10k 的圖示，請自己裝 MesloLGS NF 並設成終端機字型"
+    local wt_line="設定 → Git Bash 的設定檔 → 外觀 → 字型"
+    if [ "$WT_PROFILE_WRITTEN" -eq 1 ]; then
+      wt_line="下拉選單多了「${WT_PROFILE_NAME}」，字型已經設好；要當成預設：設定 → 啟動 → 預設設定檔"
+      [ -f "$LOCAL_FONTS/MesloLGS NF Regular.ttf" ] || wt_line="下拉選單多了「${WT_PROFILE_NAME}」；字型裝好之後重跑一次就會設好"
+    fi
     cat <<EOF
 
 ${C_BOLD}${win_head}${C_RESET}
 
     Git Bash 視窗     標題列按右鍵 → Options → Text → Font
-    Windows Terminal  設定 → Git Bash 的設定檔 → 外觀 → 字型
+    Windows Terminal  ${wt_line}
     VS Code           settings.json 加 "terminal.integrated.fontFamily": "MesloLGS NF"
 
   字型清單裡找不到的話，把終端機全部關掉重開；還是沒有就登出再登入一次。
@@ -2851,6 +3140,12 @@ print_summary() {
   printf '%s可以安心重跑%s：再跑一次這支腳本不會弄丟東西，它只重寫 ~/.zshrc 裡\n' "$C_DIM" "$C_RESET"
   printf '%s兩個標記包起來的區段，區段外你自己寫的內容一律不動。%s\n' "$C_DIM" "$C_RESET"
   printf '%s要移除：bash %s --uninstall%s\n' "$C_DIM" "$(basename "${BASH_SOURCE[0]:-install-zsh-p10k.sh}")" "$C_RESET"
+  if [ -f "$UPDATE_CMD" ] && file_has "$UPDATE_CMD" "$UPDATE_CMD_MARK"; then
+    printf '\n%s之後要更新%s：在 zsh 裡打 zsh-p10k update（會沿用這次的選項）\n' "$C_BOLD" "$C_RESET"
+    if [ "$IS_WINDOWS" -eq 1 ]; then
+      printf '  在 Git Bash（還沒進 zsh）裡要打完整路徑：~/.local/bin/zsh-p10k update\n'
+    fi
+  fi
 
   print_font_guide
   printf '\n'
@@ -2884,7 +3179,7 @@ main() {
   # zsh 寫不了這種路徑下的 .zwc 和 p10k 的快取（Linux、macOS、Windows 都一樣），
   # 安裝時會繞過去，但 instant prompt 沒辦法用，要先講。
   if home_breaks_zsh_write; then
-    warn "你的家目錄路徑有 zsh 處理不好的非 ASCII 字元（例如中文帳號名稱）。zsh 寫不了這種路徑下的編譯檔和快取，所以安裝時會先編好 Powerlevel10k，並關掉它的 instant prompt（開新視窗時提示列會晚一點出現）。之後要更新 Powerlevel10k 請加 --update 重跑這支腳本，不要自己 git pull。"
+    warn "你的家目錄路徑有 zsh 處理不好的非 ASCII 字元（例如中文帳號名稱）。zsh 寫不了這種路徑下的編譯檔和快取，所以安裝時會先編好 Powerlevel10k，並關掉它的 instant prompt（開新視窗時提示列會晚一點出現）。之後要更新 Powerlevel10k 請用 zsh-p10k update（或加 --update 重跑這支腳本），不要自己 git pull。"
   fi
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
@@ -2921,6 +3216,8 @@ main() {
 
   change_login_shell
   install_bash_profile_hook
+  install_update_command
+  install_wt_profile
   save_options
 
   print_summary
