@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.4.0"
+SCRIPT_VERSION="3.4.1"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -87,6 +87,9 @@ ZSH_BUILD_SHA256="36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f
 # 套件是 zstd 壓縮的，Windows 10 內建的 tar 解不開（沒有 libzstd），所以另外帶 zstd 官方的 Windows 版。
 # sha256 都從兩個地方各下載一次核對過（2026-11-09）。要升級時版本和 hash 一起改。
 WIN_ZSH_PKG="zsh-5.9.2-1-x86_64.pkg.tar.zst"
+# 字型網址釘在 commit 上：配合 install_fonts 寫死的 sha256，上游更新 master 也不會讓所有安裝都核對失敗。
+# 印給人手動下載的網址也用這個，兩邊才不會對不起來。
+FONT_BASE_URL="https://github.com/romkatv/powerlevel10k-media/raw/145eb9fbc2f42ee408dacd9b22d8e6e0e553f83d"
 WIN_ZSH_SHA256="9a134200a152d90a0f1820d6aa74c3369d8539c068b523852549d74b16739fa8"
 WIN_ZSTD_NAME="zstd-v1.5.7-win64"
 WIN_ZSTD_URL="https://github.com/facebook/zstd/releases/download/v1.5.7/${WIN_ZSTD_NAME}.zip"
@@ -1421,6 +1424,12 @@ DOWNLOAD_TRIES=3
 # 正在下載的 .part 檔。按 Ctrl-C 時 on_interrupt 要清掉它。
 DOWNLOAD_PART=""
 
+# 結束時要清掉的暫存目錄。die 會直接 exit，開暫存目錄的函式自己清不到。
+EXIT_CLEANUP=""
+cleanup_on_exit() {
+  if [ -n "$EXIT_CLEANUP" ]; then rm -rf "$EXIT_CLEANUP"; fi
+}
+
 on_interrupt() {
   [ -n "$DOWNLOAD_PART" ] && rm -f "$DOWNLOAD_PART"
   printf '\n' >&2
@@ -1428,8 +1437,13 @@ on_interrupt() {
   exit 130
 }
 
+# download_to <檔案> <網址> [sha256]
+# 有給 sha256 時先核對 .part，對了才改成正式檔名：正式檔名一出現就一定是驗過的，
+# 中途按 Ctrl-C 不會留下沒驗過、重跑又會被當成已經裝好的檔案。
+# 回傳 0 成功；1 下載失敗；2 sha256 對不上（實際值放在 DOWNLOAD_GOT）；3 沒有工具可以核對。
+DOWNLOAD_GOT=""
 download_to() {
-  local out="$1" url="$2" part="$1.part" try=1 here="$PWD" dir base rc
+  local out="$1" url="$2" sha="${3:-}" part="$1.part" try=1 here="$PWD" dir base rc
   # Git Bash 的 curl 是原生 Windows 程式，路徑有字碼頁以外的字元（例如帳號名稱）就寫不了檔。
   # 先 cd 過去，只給它不含帳號名稱的檔名。不用 subshell：Ctrl-C 的 trap 要在這個 shell 裡跑。
   dir="$(dirname "$out")"
@@ -1448,6 +1462,11 @@ download_to() {
     fi
     cd "$here"
     if [ "$rc" -eq 0 ]; then
+      if [ -n "$sha" ]; then
+        DOWNLOAD_GOT="$(file_sha256 "$part")" || { rm -f "$part"; return 3; }
+        # hash 對不上不重試：那代表拿到的東西被動過，不是網路問題。
+        [ "$DOWNLOAD_GOT" = "$sha" ] || { rm -f "$part"; return 2; }
+      fi
       mv "$part" "$out"
       return 0
     fi
@@ -1472,30 +1491,36 @@ file_sha256() {
 # 下載原始碼並核對 sha256。後面的網址依序試，前一個下載失敗才換下一個。
 # hash 對不上就直接停，不換下一個網址重試：那代表拿到的東西被動過，不是網路問題。
 fetch_verified() {
-  local out="$1" sha="$2" url got
+  local out="$1" sha="$2" url rc
   shift 2
   for url in "$@"; do
-    download_to "$out" "$url" || continue
-    got="$(file_sha256 "$out")" || { rm -f "$out"; die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; }
-    [ "$got" = "$sha" ] && return 0
-    rm -f "$out"
-    die "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不使用來路不明的檔案。"
+    rc=0
+    download_to "$out" "$url" "$sha" || rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      2) die "$out 的 sha256 對不上（預期 ${sha}，實際 ${DOWNLOAD_GOT}）。不使用來路不明的檔案。" ;;
+      3) die "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。" ;;
+    esac
   done
+  [ -n "$FETCH_FAIL_HINT" ] && err "$FETCH_FAIL_HINT"
   die "下載失敗：$out"
 }
+# 所有網址都下載失敗時，多印一行告訴人可能的原因和怎麼辦。呼叫端設、用完清掉。
+FETCH_FAIL_HINT=""
 
 # 跟 fetch_verified 一樣核對 sha256，但失敗時只警告並回 1，不結束整支腳本。
 # 給「裝不成也沒關係」的東西用（例如 iTerm2）。
 fetch_verified_soft() {
-  local out="$1" sha="$2" url got
+  local out="$1" sha="$2" url rc
   shift 2
   for url in "$@"; do
-    download_to "$out" "$url" || continue
-    got="$(file_sha256 "$out")" || { rm -f "$out"; warn "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; return 1; }
-    [ "$got" = "$sha" ] && return 0
-    rm -f "$out"
-    warn "$out 的 sha256 對不上（預期 ${sha}，實際 ${got}）。不安裝來路不明的檔案。"
-    return 1
+    rc=0
+    download_to "$out" "$url" "$sha" || rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      2) warn "$out 的 sha256 對不上（預期 ${sha}，實際 ${DOWNLOAD_GOT}）。不安裝來路不明的檔案。"; return 1 ;;
+      3) warn "沒有 sha256sum 也沒有 shasum，無法核對 ${out}。"; return 1 ;;
+    esac
   done
   warn "下載失敗：$*"
   return 1
@@ -1591,13 +1616,20 @@ build_zsh_locally() {
 # Windows：把 MSYS2 的 zsh 解開放在使用者目錄。
 # 先解到 .new 確認跑得起來才換上，中途失敗不會留下裝一半的 zsh。
 install_zsh_msys() {
-  local tmp new="$WIN_ZSH_PREFIX.new"
+  local tmp new="$WIN_ZSH_PREFIX.new" try
   tmp="$(mktemp -d)"
+  # 中途 die 會直接 exit，這裡清不到，交給結束時的 trap。
+  EXIT_CLEANUP="$tmp"
   info "下載 MSYS2 的 zsh（${WIN_ZSH_PKG}）"
   fetch_verified "$tmp/zstd.zip" "$WIN_ZSTD_SHA256" "$WIN_ZSTD_URL"
+  # 版本寫死在腳本裡（配合寫死的 sha256），MSYS2 把舊版下架之後這裡就會下載失敗。
+  FETCH_FAIL_HINT="MSYS2 可能已經把 ${WIN_ZSH_PKG} 下架了，這支腳本寫死的是這個版本。請下載最新版的安裝腳本再跑一次：
+       https://github.com/esp8266good/zsh-p10k-installer/releases/latest/download/install-zsh-p10k.sh
+       最新版也一樣失敗的話，請到 GitHub 開 issue。"
   fetch_verified "$tmp/zsh.tar.zst" "$WIN_ZSH_SHA256" \
     "https://repo.msys2.org/msys/x86_64/$WIN_ZSH_PKG" \
     "https://mirror.msys2.org/msys/x86_64/$WIN_ZSH_PKG"
+  FETCH_FAIL_HINT=""
   unzip -q "$tmp/zstd.zip" -d "$tmp" || die "解不開 zstd 的壓縮檔。"
   rm -rf "$new"
   mkdir -p "$new"
@@ -1606,10 +1638,17 @@ install_zsh_msys() {
     | tar -xf - -C "$new" --exclude=.BUILDINFO --exclude=.MTREE --exclude=.PKGINFO \
     || die "解不開 zsh 的套件。"
   rm -rf "$tmp"
+  EXIT_CLEANUP=""
   "$new/usr/bin/zsh.exe" --version >/dev/null 2>&1 \
     || die "解開的 zsh 跑不起來，可能是 Git for Windows 太舊。請更新 Git for Windows 之後再試。"
-  rm -rf "$WIN_ZSH_PREFIX"
-  mv "$new" "$WIN_ZSH_PREFIX"
+  # 剛跑過的 zsh.exe 常被防毒軟體拿去掃，掃完之前目錄換不了名字，等一下再試。
+  # 舊目錄也可能被鎖住刪不乾淨：它還在的話 mv 會把 .new 搬進它裡面，所以每次都要確認它不在了。
+  try=1
+  until rm -rf "$WIN_ZSH_PREFIX" 2>/dev/null; [ ! -e "$WIN_ZSH_PREFIX" ] && mv "$new" "$WIN_ZSH_PREFIX" 2>/dev/null; do
+    [ "$try" -ge 5 ] && die "zsh 已解開在 ${new}，但換不上去（可能是防毒軟體還在掃描）。等一下再重跑一次。"
+    sleep "$try"
+    try=$((try + 1))
+  done
   DET_ZSH_PATH="$WIN_ZSH_EXE"
   ok "zsh 已安裝：$DET_ZSH_PATH"
 }
@@ -1692,6 +1731,45 @@ install_theme_and_plugins() {
     "$ZSH_CUSTOM_DIR/plugins/zsh-completions" "zsh-completions"
 }
 
+# 家目錄路徑有沒有非 ASCII 字元（例如中文帳號名稱）。
+home_is_nonascii() { printf '%s' "$HOME" | LC_ALL=C grep '[^ -~]' >/dev/null; }
+
+# zsh 的 zcompile、sysopen 用絕對路徑寫不了「UTF-8 編碼裡有 0x83-0xA2 位元組」的目錄
+# （zsh 內部拿這段位元組當特殊記號，寫檔前沒轉回來）。中日泰文幾乎都會中，
+# à、ő、ğ 也會；josé、müller、ñandú 不會。Linux、macOS、Windows 都一樣，換 locale 也沒用。
+home_breaks_zsh_write() {
+  printf '%s' "$HOME" | LC_ALL=C grep "$(printf '[\203-\242]')" >/dev/null
+}
+
+# p10k 每開一次視窗就會試著 zcompile 自己，在這種路徑下每次都印一串錯誤。
+# 相對路徑寫得了，所以在這裡先 cd 進去編好。p10k 看到 .zwc 比原檔新就不會再編。
+P10K_ZWC_FILES="powerlevel9k.zsh-theme powerlevel10k.zsh-theme internal/p10k.zsh internal/icons.zsh
+internal/configure.zsh internal/worker.zsh internal/parser.zsh gitstatus/gitstatus.plugin.zsh gitstatus/install"
+
+precompile_p10k() {
+  home_breaks_zsh_write || return 0
+  [ "$DET_HAS_EXTERNAL_P10K" -eq 1 ] && return 0
+  local root="$ZSH_CUSTOM_DIR/themes/powerlevel10k" zsh="$DET_ZSH_PATH" f n=0 total=0
+  [ -d "$root" ] || return 0
+  [ -x "$zsh" ] || zsh="$(command -v zsh 2>/dev/null)"
+  [ -n "$zsh" ] || return 0
+  for f in $P10K_ZWC_FILES; do
+    [ -f "$root/$f" ] || continue
+    total=$((total + 1))
+    if (cd "$root/$(dirname "$f")" \
+        && "$zsh" -fc 'zcompile -R -- "$1.zwc" "$1"' zsh "$(basename "$f")") >/dev/null 2>&1; then
+      n=$((n + 1))
+    fi
+  done
+  if [ "$total" -eq 0 ]; then
+    warn "Powerlevel10k 裡找不到要預先編譯的檔案（可能是上游改了結構），開新視窗時可能會印 zcompile 的錯誤訊息。"
+  elif [ "$n" -eq "$total" ]; then
+    ok "已預先編譯 Powerlevel10k（$n 個檔案），開新視窗不會再印 zcompile 的錯誤。"
+  else
+    warn "Powerlevel10k 有 $((total - n)) 個檔案預先編譯失敗，開新視窗時可能會印 zcompile 的錯誤訊息。"
+  fi
+}
+
 install_p10k_template() {
   if [ -f "$HOME/.p10k.zsh" ]; then
     info "~/.p10k.zsh 已存在，不覆蓋。"
@@ -1729,8 +1807,7 @@ install_fonts() {
   fi
   info "安裝 MesloLGS NF 字型"
   mkdir -p "$LOCAL_FONTS"
-  # 網址釘在 commit 上：配合下面寫死的 sha256，上游更新 master 也不會讓所有安裝都核對失敗。
-  local base="https://github.com/romkatv/powerlevel10k-media/raw/145eb9fbc2f42ee408dacd9b22d8e6e0e553f83d"
+  local base="$FONT_BASE_URL"
   # sha256 從兩個地方各下載一次核對過（2026-11-09）。上游換字型時要一起改。
   local entry style sha name out
   for entry in \
@@ -2126,6 +2203,15 @@ EOS
 EOS
   fi
 
+  if [ "$IS_WINDOWS" -eq 1 ] && home_is_nonascii; then
+    cat <<'EOS'
+
+# 家目錄有中文這類字元時，Windows 版 zsh 的 `autoload -R` 會把函式檔的路徑記錯，
+# compinit 就找不到 compaudit、compdump。先把這兩個載進來，compinit 就不會再去找檔案。
+autoload -Uz +X compaudit compdump 2>/dev/null
+EOS
+  fi
+
   # oh-my-zsh 的行為設定，必須在 oh-my-zsh 載入之前。
   # 使用者區段裡已經有的，一律讓給使用者，我們不覆蓋他寫好的值。
   if [ "$DET_HAS_OMZ_UPDATE" -eq 0 ] || [ "$DET_HAS_HIST_STAMPS" -eq 0 ]; then
@@ -2189,6 +2275,19 @@ source "$ZSH/oh-my-zsh.sh"
 HISTSIZE=50000
 SAVEHIST=50000
 setopt HIST_IGNORE_ALL_DUPS HIST_REDUCE_BLANKS SHARE_HISTORY
+EOS
+  fi
+
+  if home_breaks_zsh_write; then
+    cat <<'EOS'
+
+# 家目錄有中文這類字元時，zsh 寫不了 p10k 放在 ~/.cache 的 instant prompt 和狀態快取
+# （zsh 本身的限制），每次開 prompt 都會印錯誤。這兩個寫入改成什麼都不做：
+# 少的只是 instant prompt，提示列本身照常。
+if (( $+functions[_p9k_dump_state] )); then
+  _p9k_dump_state() { return 0 }
+  _p9k_dump_instant_prompt() { return 0 }
+fi
 EOS
   fi
 
@@ -2451,14 +2550,37 @@ EOF
 EOF
   fi
   touch "$HOME/.bash_profile"
+  # 檔案裡的 hook 跟這次要寫的一字不差（也沒有 v2 的舊 hook）就不動，
+  # 不然每重跑一次就多一份 .bash_profile 備份。
+  if [ "$(current_hook_block)" = "$(gen_hook_block "$target")" ] \
+     && ! file_has "$HOME/.bash_profile" "# BEGIN USER LOCAL ZSH AUTO START"; then
+    ok "~/.bash_profile 的 auto-start hook 已經是最新的（指向 ${target}）"
+    return 0
+  fi
   if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
     # 先移除舊的再寫新的，路徑才會跟著更新
     remove_hook
   fi
 
   info "login shell 沒改成，改在 ~/.bash_profile 裝一個保守的 auto-start hook。"
-  cat >> "$HOME/.bash_profile" <<EOF
+  { printf '\n'; gen_hook_block "$target"; } >> "$HOME/.bash_profile"
+  ok "已寫入 ~/.bash_profile hook（指向 ${target}）"
+}
 
+# 印出 ~/.bash_profile 裡目前的 hook 區段（含頭尾標記）；沒有就什麼都不印。
+current_hook_block() {
+  [ -f "$HOME/.bash_profile" ] || return 0
+  awk -v b="$HOOK_BEGIN" -v e="$HOOK_END" '
+    $0 == b { on = 1 }
+    on { print }
+    $0 == e { on = 0 }
+  ' "$HOME/.bash_profile"
+}
+
+# gen_hook_block <zsh 路徑>：印出要寫進 ~/.bash_profile 的 hook 區段。
+gen_hook_block() {
+  local target="$1"
+  cat <<EOF
 $HOOK_BEGIN
 # 只在「互動式、有 tty、不是 agent/CI」的 login shell 裡切換到 zsh。
 # 設 DISABLE_AUTO_ZSH=1 可以繞過。
@@ -2472,7 +2594,6 @@ if [ -z "\$DISABLE_AUTO_ZSH" ] && [ -z "\$ZSH_VERSION" ] && [ -x "$target" ] \\
 fi
 $HOOK_END
 EOF
-  ok "已寫入 ~/.bash_profile hook（指向 ${target}）"
 }
 
 remove_hook() {
@@ -2692,10 +2813,10 @@ Powerlevel10k 很依賴圖示字元。如果你看到一堆方塊或問號，那
 是你的終端機沒有 MesloLGS NF 這套字型。
 
   下載（四個都要）：
-    https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf
-    https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf
-    https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf
-    https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf
+    ${FONT_BASE_URL}/MesloLGS%20NF%20Regular.ttf
+    ${FONT_BASE_URL}/MesloLGS%20NF%20Bold.ttf
+    ${FONT_BASE_URL}/MesloLGS%20NF%20Italic.ttf
+    ${FONT_BASE_URL}/MesloLGS%20NF%20Bold%20Italic.ttf
 
   裝好之後，在終端機裡把字型設成 MesloLGS NF：
     MobaXterm        Settings → Configuration → Terminal → Terminal font
@@ -2741,6 +2862,7 @@ print_summary() {
 
 main() {
   trap on_interrupt INT TERM
+  trap cleanup_on_exit EXIT
 
   if [ "$OPT_ROLLBACK" -eq 1 ]; then
     do_rollback
@@ -2759,9 +2881,10 @@ main() {
   check_supported
   macos_require_clt
   print_report
-  # MSYS2 版 zsh 的 zcompile 寫不了非 ASCII 路徑（換 locale 也一樣，實測），p10k 又沒有開關可以關掉編譯。
-  if [ "$IS_WINDOWS" -eq 1 ] && printf '%s' "$HOME" | LC_ALL=C grep '[^ -~]' >/dev/null; then
-    warn "你的家目錄路徑有非 ASCII 字元（例如中文帳號名稱）。zsh 和 p10k 能用，但開新視窗時可能會印出 zcompile 的錯誤訊息。"
+  # zsh 寫不了這種路徑下的 .zwc 和 p10k 的快取（Linux、macOS、Windows 都一樣），
+  # 安裝時會繞過去，但 instant prompt 沒辦法用，要先講。
+  if home_breaks_zsh_write; then
+    warn "你的家目錄路徑有 zsh 處理不好的非 ASCII 字元（例如中文帳號名稱）。zsh 寫不了這種路徑下的編譯檔和快取，所以安裝時會先編好 Powerlevel10k，並關掉它的 instant prompt（開新視窗時提示列會晚一點出現）。之後要更新 Powerlevel10k 請加 --update 重跑這支腳本，不要自己 git pull。"
   fi
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
@@ -2778,6 +2901,7 @@ main() {
   install_missing_packages
   install_oh_my_zsh
   install_theme_and_plugins
+  precompile_p10k
   install_p10k_template
   install_fonts
   install_iterm2

@@ -243,6 +243,20 @@ setup() {
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
       seed_desktop
       seed_extra_bashrc
+      # 核對 sha256 的那一刻，正式檔名不能已經存在：不然這時按 Ctrl-C 會留下沒驗過的字型，
+      # 重跑看到檔案在就跳過。包一層 sha256sum，被呼叫時記下正式檔名在不在。
+      mkdir -p /tmp/shawrap
+      cat > /tmp/shawrap/sha256sum <<'EOF'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *MesloLGS*) f="${a%.part}"; if [ -e "$f" ]; then echo "EXISTS $f"; else echo "ok $a"; fi >> /tmp/shawrap/log ;;
+  esac
+done
+exec /usr/bin/sha256sum "$@"
+EOF
+      chmod +x /tmp/shawrap/sha256sum
+      export PATH="/tmp/shawrap:$PATH"
       ;;
     forwarded-display)
       sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
@@ -315,6 +329,14 @@ EOF
       mkdir -p "$HOME/brew"
       printf 'typeset -g EXTERNAL_P10K=1\n' > "$HOME/brew/powerlevel10k.zsh-theme"
       printf '# existing zshrc\nsource "$HOME/brew/powerlevel10k.zsh-theme"\n%s\n' "$SENTINEL" > "$HOME/.zshrc"
+      seed_extra_bashrc
+      ;;
+    nonascii-home)
+      # 家目錄有中文和泰文。zsh 的 zcompile、sysopen 用絕對路徑寫不了這種目錄
+      # （路徑裡有 0x83-0x9F 的位元組就會壞），p10k 每開一次視窗就印一串錯誤。
+      sudo apt-get install -y -qq --no-install-recommends zsh >/dev/null 2>&1
+      export HOME="/tmp/使用者ผู้ใช้" LANG=C.UTF-8
+      mkdir -p "$HOME"
       seed_extra_bashrc
       ;;
     ancient-awk)
@@ -408,7 +430,28 @@ case "$FIXTURE" in
     ;;
 esac
 
+# 開一個有 tty 的互動 zsh，停一下讓 p10k 跑完 prompt 之後的 dump，再離開。
+# 印出 zsh 或 p10k 的錯誤行；沒有錯誤就什麼都不印。
+# 用 sleep 是因為 dump 掛在 zle 等輸入時才跑，輸入太早到它就不會跑，測試會假性通過。
+tty_zsh_errors() {
+  { sleep 3; echo exit; sleep 1; } \
+    | TERM=xterm-256color script -qfc "$ZSH_BIN -i" /dev/null 2>&1 | tr -d '\r' \
+    | grep -aE 'zwc|sysopen|definition file not found|no such file|command not found' || true
+}
+
 case "$FIXTURE" in
+  nonascii-home)
+    check "事前有提醒家目錄有非 ASCII 字元" 'grep -q "非 ASCII" /tmp/run1.log'
+    TTY_ERR1="$(tty_zsh_errors)"; TTY_ERR2="$(tty_zsh_errors)"
+    check "第一次開 zsh 沒有錯誤輸出"   '[ -z "$TTY_ERR1" ]'
+    check "第二次開 zsh 沒有錯誤輸出"   '[ -z "$TTY_ERR2" ]'
+    [ -z "$TTY_ERR2" ] || printf '%s\n' "$TTY_ERR2" | head -5 | sed 's/^/    | /'
+    check "p10k 真的有載入"             '[ "$("$ZSH_BIN" -i -c "print -r -- \${+functions[p10k]}" 2>/dev/null | tail -1)" = 1 ]'
+    # josé、müller 這種路徑 zsh 寫得了，不能被一起關掉 instant prompt。
+    mkdir -p /tmp/josé
+    HOME=/tmp/josé bash "$INSTALLER" --dry-run > /tmp/jose.log 2>&1
+    check "josé 這種帳號不會被提醒"     '! grep -q "非 ASCII" /tmp/jose.log && grep -q "dry-run" /tmp/jose.log'
+    ;;
   native-omz)
     check "pyenv 被判定為已存在而跳過"  'grep -q "已在 .zshrc 裡，跳過.*pyenv" /tmp/run1.log'
     check "nvm 被判定為已存在而跳過"    'grep -q "已在 .zshrc 裡，跳過.*nvm" /tmp/run1.log'
@@ -447,6 +490,8 @@ case "$FIXTURE" in
   has-desktop)
     check "判定為有桌面"                'grep -q "桌面環境        這台有" /tmp/run1.log'
     check "字型有安裝"                  '[ -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
+    check "字型有核對 sha256"           '[ -s /tmp/shawrap/log ]'
+    check "核對時正式檔名還不存在"      '! grep -q "^EXISTS" /tmp/shawrap/log'
     ;;
   font-fail)
     check "安裝照樣完成"                '[ "$RC1" -eq 0 ]'
@@ -466,6 +511,9 @@ case "$FIXTURE" in
     # DISPLAY 有值但機器沒有桌面。舊版就是在這裡把一台工作站判成「有圖形介面」的
     check "DISPLAY 有值不會騙過偵測"    'grep -q "桌面環境        沒有" /tmp/run1.log'
     check "沒有裝字型"                  '[ ! -d "$HOME/.local/share/fonts/MesloLGS-NF" ]'
+    # 教人手動下載的網址要跟安裝用的一樣釘在 commit 上，上游換字型時才不會對不起來。
+    check "字型說明有給下載網址"        'grep -q "powerlevel10k-media/raw/.*Regular.ttf" /tmp/run1.log'
+    check "字型說明的網址沒有用 master" '! grep -q "powerlevel10k-media/raw/master" /tmp/run1.log'
     ;;
   hook-fallback)
     check "chsh 走不通時改裝 hook"      'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
@@ -553,6 +601,11 @@ bash "$INSTALLER" -y > /tmp/run2.log 2>&1
 RC2=$?
 [ "$FIXTURE" = "hook-fallback" ] && \
 check "第二次沒有改動 .bash_profile"    'cmp -s /tmp/bash_profile.run1 "$HOME/.bash_profile"'
+# hook 內容一樣就不該拆掉重寫：不然每重跑一次就多一份 .bash_profile 備份。
+[ "$FIXTURE" = "hook-fallback" ] && \
+check "第二次沒有備份 .bash_profile"    '! grep -q "已備份 .*\.bash_profile" /tmp/run2.log'
+[ "$FIXTURE" = "hook-fallback" ] && \
+check "第二次沒有印「已移除 hook」"      '! grep -q "已移除 ~/.bash_profile" /tmp/run2.log'
 check "第二次安裝結束碼為 0"            '[ "$RC2" -eq 0 ]'
 check "第二次沒有改動 .zshrc"           'cmp -s /tmp/zshrc.run1 "$HOME/.zshrc"'
 check "第二次回報「已經是最新狀態」"     'grep -q "已經是最新狀態" /tmp/run2.log'
