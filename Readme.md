@@ -114,7 +114,7 @@ macOS 開新視窗是 login shell，會跑 `/etc/zprofile` 裡的 `path_helper`�
 | 情況 | 腳本怎麼處理 |
 |---|---|
 | zsh | Git Bash 沒有 zsh，腳本下載 MSYS2 編好的 zsh（核對 sha256），解開放在 `~/.local/zsh-msys` |
-| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。VS Code 裡的 Git Bash 也會切。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
+| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。VS Code 裡的 Git Bash 也會切，並補上 VS Code 的 zsh shell integration（指令偵測、結束碼）。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
 | 字型 | 裝到這個 Windows 帳號的字型目錄並登錄，然後要自己把終端機字型改成 MesloLGS NF（結尾會教） |
 | Windows Terminal | 多一個「Git Bash (zsh)」設定檔，字型已經是 MesloLGS NF。用 Windows Terminal 的 fragment 加，**不動你的 `settings.json`**；`--uninstall` 會拿掉 |
 

@@ -407,6 +407,26 @@ t_wt_profile() {
   check "--dry-run 不寫 fragment" 'h3="$(new_home)"; run_gb "$h3" --dry-run; [ ! -e "$(wt_fragment "$h3")" ]'
 }
 
+# VS Code 的 Git Bash 被 hook 換成 zsh 後，要自己載入 VS Code 的 zsh shell integration。
+# Windows 的 code 回的是 C:\... 路徑：zsh 的 [[ -r ]] 認得，`.` 卻讀不到，所以用假的 code 回這種路徑。
+t_vscode_si() {
+  banner "vscode-si"
+  ensure_clean_home
+  local h="$CLEAN_HOME" d="$WORK/fakecode"
+  mkdir -p "$d"
+  printf 'typeset -g VSC_SI_LOADED=1\n' > "$d/si.zsh"
+  printf "#!/bin/sh\necho '%s'\n" "$(cygpath -w "$d/si.zsh")" > "$d/code"
+  chmod +x "$d/code"
+  rm -f "$h/.cache/zsh-p10k-vscode-integration"
+  local out err
+  out="$(PATH="$d:$PATH" TERM_PROGRAM=vscode VSCODE_INJECTION=1 in_zsh "$h" -i -c 'print -r -- "SI=${VSC_SI_LOADED:-0} H=$HISTFILE"' | grep '^SI=' | tail -1)"
+  check "載入了 VS Code 的 zsh integration" '[ "${out%% *}" = SI=1 ]'
+  check "HISTFILE 沒被改成 /.zsh_history" '[ "${out#* }" = "H=$h/.zsh_history" ]'
+  err="$(HOME="$h" PATH="$d:$PATH" TERM=xterm-256color TERM_PROGRAM=vscode "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null | grep -v gitstatus)"
+  check "沒有「no such file」之類的錯誤" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -3 | sed 's/^/    | /'
+}
+
 # 本來就有 .bash_profile：裝完馬上 --rollback，hook 也要跟著還原掉。
 t_rollback_hook() {
   banner "rollback-hook"
@@ -444,7 +464,7 @@ t_self_update() {
   check "zsh 裡打得到 zsh-p10k" '[ "$(in_zsh "$h" -c "command -v zsh-p10k")" = "$h/.local/bin/zsh-p10k" ]'
 }
 
-ALL_SCENARIOS="dry-run clean rerun wt-profile self-update reg-fail no-fonts-claim no-chsh-hint uninstall
+ALL_SCENARIOS="dry-run clean rerun wt-profile self-update vscode-si reg-fail no-fonts-claim no-chsh-hint uninstall
 rollback-hook profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash zsh-pkg-gone zsh-mv-retry spaced-home nonascii-home"
 
 run_scenario() {
@@ -469,6 +489,7 @@ run_scenario() {
     wt-profile)   t_wt_profile ;;
     rollback-hook) t_rollback_hook ;;
     self-update)  t_self_update ;;
+    vscode-si)    t_vscode_si ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }

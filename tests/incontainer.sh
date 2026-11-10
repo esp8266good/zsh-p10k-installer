@@ -462,6 +462,25 @@ tty_zsh_errors() {
 }
 
 case "$FIXTURE" in
+  fresh-bash)
+    # VS Code 的終端機：bash 被 hook 換成 zsh 後，要自己載入 VS Code 的 zsh shell integration。
+    # 用假的 code 指令：回報一個假的 integration 腳本路徑，並記下自己被叫了幾次。
+    mkdir -p /tmp/fakecode
+    printf '#!/bin/sh\necho call >> /tmp/fakecode/calls\n[ "$1 $2" = "--locate-shell-integration-path zsh" ] && echo /tmp/fakecode/si.zsh\n' > /tmp/fakecode/code
+    chmod +x /tmp/fakecode/code
+    # 第二行照抄 VS Code 腳本的行為：看到 VSCODE_INJECTION=1 就把 HISTFILE 改到 $USER_ZDOTDIR 底下。
+    printf 'typeset -g VSC_SI_LOADED=1\n[[ "$VSCODE_INJECTION" == "1" ]] && HISTFILE=$USER_ZDOTDIR/.zsh_history\n' > /tmp/fakecode/si.zsh
+    vsc_si() { env PATH="/tmp/fakecode:$PATH" "$@" "$ZSH_BIN" -i -c 'print -r -- "SI=${VSC_SI_LOADED:-0}"' 2>/dev/null | grep '^SI=' | tail -1; }
+    check "VS Code 終端機裡會載入 zsh 的 shell integration" '[ "$(vsc_si TERM_PROGRAM=vscode)" = SI=1 ]'
+    check "第二次用快取，不再叫 code（不用每次啟動 Node.js）" \
+          '[ "$(vsc_si TERM_PROGRAM=vscode)" = SI=1 ] && [ "$(wc -l < /tmp/fakecode/calls)" -eq 1 ]'
+    check "VS Code 自己注入過就不重複載入" '[ "$(vsc_si TERM_PROGRAM=vscode VSCODE_SHELL_INTEGRATION=1)" = SI=0 ]'
+    check "VS Code 正在直接注入 zsh 時不插手" '[ "$(vsc_si TERM_PROGRAM=vscode VSCODE_ZDOTDIR=/tmp/vsc)" = SI=0 ]'
+    # 從 VS Code 的 bash 切過來時，環境裡會留著 bash 那邊的 VSCODE_INJECTION=1。
+    check "bash 留下的 VSCODE_INJECTION 不會把 HISTFILE 弄成 /.zsh_history" \
+          '[ "$(env PATH="/tmp/fakecode:$PATH" TERM_PROGRAM=vscode VSCODE_INJECTION=1 "$ZSH_BIN" -i -c "print -r -- H=\$HISTFILE" 2>/dev/null | grep "^H=" | tail -1)" = "H=$HOME/.zsh_history" ]'
+    check "不在 VS Code 裡就不載入"       '[ "$(vsc_si TERM_PROGRAM=other)" = SI=0 ]'
+    ;;
   nonascii-home)
     check "事前有提醒家目錄有非 ASCII 字元" 'grep -q "非 ASCII" /tmp/run1.log'
     TTY_ERR1="$(tty_zsh_errors)"; TTY_ERR2="$(tty_zsh_errors)"

@@ -2383,6 +2383,33 @@ EOS
 EOS
   fi
 
+  cat <<'EOS'
+
+# VS Code 的終端機：bash 被 ~/.bash_profile 的 hook 換成 zsh 時，VS Code 來不及注入 zsh 的
+# shell integration（指令偵測、結束碼、目前目錄）。照 VS Code 文件的手動安裝方式補上。
+# `code --locate-shell-integration-path` 要啟動 Node.js，所以路徑記在快取檔，檔案還在就不再問。
+# 不包成函式：VS Code 的腳本要在最外層 source，裡面宣告的變數才不會變成 local。
+# VS Code 直接開 zsh 時會自己注入：那時 VSCODE_ZDOTDIR 已經設好，VSCODE_SHELL_INTEGRATION 則被
+# p10k 收走（改記在 __p9k_force_term_shell_integration）。這兩種都不再載一次。
+# VSCODE_INJECTION 是 bash 那邊留下來的，zsh 這邊根本沒注入；不清掉的話 VS Code 的腳本會把
+# HISTFILE 改成 $USER_ZDOTDIR/.zsh_history，也就是 /.zsh_history。
+if [[ -o interactive && "$TERM_PROGRAM" == "vscode" && -z "${VSCODE_SHELL_INTEGRATION:-}" && -z "${VSCODE_ZDOTDIR:-}" ]] \
+   && (( ! ${+__p9k_force_term_shell_integration} && $+commands[code] )); then
+  unset VSCODE_INJECTION
+  _zp10k_vsc_cache="${XDG_CACHE_HOME:-$HOME/.cache}/zsh-p10k-vscode-integration"
+  _zp10k_vsc_path=""
+  [[ -r "$_zp10k_vsc_cache" ]] && _zp10k_vsc_path="$(<"$_zp10k_vsc_cache")"
+  if [[ ! -r "$_zp10k_vsc_path" ]]; then
+    _zp10k_vsc_path="$(code --locate-shell-integration-path zsh 2>/dev/null)"
+    # Windows 的 code 回的是 c:\... 路徑：zsh 的 [[ -r ]] 認得，`.` 卻讀不到，要先轉成 /c/...。
+    (( $+commands[cygpath] )) && [[ -n "$_zp10k_vsc_path" ]] && _zp10k_vsc_path="$(cygpath -u "$_zp10k_vsc_path")"
+    [[ -r "$_zp10k_vsc_path" ]] && { mkdir -p "${_zp10k_vsc_cache:h}" && print -r -- "$_zp10k_vsc_path" >| "$_zp10k_vsc_cache"; } 2>/dev/null
+  fi
+  [[ -r "$_zp10k_vsc_path" ]] && . "$_zp10k_vsc_path"
+  unset _zp10k_vsc_cache _zp10k_vsc_path
+fi
+EOS
+
   printf '%s\n' "$BLOCK_TAIL_END"
 }
 
