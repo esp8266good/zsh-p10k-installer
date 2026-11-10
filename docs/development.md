@@ -39,11 +39,12 @@ tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 | `dotfiles-symlink` | `.zshrc` 是 stow / chezmoi 建的 symlink | symlink 被換成一般檔案 |
 | `sticky-options` | 第一次帶了 `--omz-update reminder --no-chsh`，之後都不帶 | 選項悄悄變回預設值；`zsh-p10k update` 沒沿用選項、sha256 對不上還照跑 |
 | `nonascii-home` | 家目錄有中文 | zsh 寫不了 `.zwc` 和 p10k 快取，每開一次視窗就印錯誤 |
-
-`zsh-p10k update` 的測試用 `ZSH_P10K_RELEASE_URL` 指到 `file://` 的假 Release，不連 GitHub。
 | `font-fail` | 字型的網址一律下載失敗 | 字型沒裝到，結尾還說裝好了 |
 | `external-p10k` | `.zshrc` 自己 source 外部的 p10k | 多 clone 一份、oh-my-zsh 去找不存在的主題 |
 | `self-build` | 沒有 zsh 也沒有 sudo | 自行編譯那條路壞掉沒人發現 |
+
+`zsh-p10k update` 的測試用 `ZSH_P10K_RELEASE_URL` 指到 `file://` 的假 Release，不連 GitHub。
+假 Release 裡的腳本把版本號改成 9.9.9，這樣才測得到「update 跑到一半，正在執行的 `zsh-p10k` 被新版改寫」。
 
 `ancient-awk` 要另外拉 `debian:buster` 映像，比較慢，但只有它測得到 mawk 1.3.3 那種
 「regex 不報錯、就是永遠不成立」的狀況，在 gawk 或 mawk 1.3.4 上怎麼測都會過。

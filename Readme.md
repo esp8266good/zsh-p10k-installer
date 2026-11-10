@@ -102,8 +102,9 @@ p10k 的圖示要 MesloLGS NF 字型，而且要裝在**你眼睛看著的那個
 不想要了就刪掉 `~/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json`。
 
 macOS 開新視窗是 login shell，會跑 `/etc/zprofile` 裡的 `path_helper`，每次都把 `~/.zshenv` 加的目錄排到 `/usr/bin` 後面
-（在 macOS 上實測過）。所以 `~/.zshrc` 的 head 區段會再把家目錄底下的目錄（`~/.local/bin`、`~/bin`、pyenv、cargo…）排回最前面，
-`~/.local/bin` 裡自己裝的指令就不會被系統的同名指令蓋掉。系統目錄的順序不動，你在 `~/.zprofile` 加的 Homebrew 還是排在 `/usr/bin` 前面。
+（在 macOS 上實測過）。所以 `~/.zshrc` 的 head 區段會把 `~/.zshenv` 讀完時就在的家目錄底下的目錄（`~/.local/bin`、`~/bin`、pyenv、cargo…）排回最前面，
+`~/.local/bin` 裡自己裝的指令就不會被系統的同名指令蓋掉。
+`~/.zprofile` 裡加的目錄和系統目錄的順序不動：你在那裡加的 Homebrew 還是排在 `/usr/bin` 前面，刻意加在最後面的也還是在最後面。
 
 ## Windows 10 / 11
 

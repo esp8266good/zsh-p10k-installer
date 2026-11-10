@@ -426,13 +426,19 @@ t_self_update() {
   ensure_clean_home
   local h="$CLEAN_HOME" rel="$WORK/rel" bad="$WORK/relbad"
   mkdir -p "$rel" "$bad"
-  cp "$INSTALLER" "$rel/install-zsh-p10k.sh"; (cd "$rel" && sha256sum install-zsh-p10k.sh > SHA256SUMS)
+  # 版本號換掉：update 跑到一半，正在執行的 zsh-p10k 會被新版改寫（Windows 上 rename 蓋過執行中的檔案要測）。
+  sed 's/^SCRIPT_VERSION=".*"$/SCRIPT_VERSION="9.9.9"/' "$INSTALLER" > "$rel/install-zsh-p10k.sh"
+  (cd "$rel" && sha256sum install-zsh-p10k.sh > SHA256SUMS)
   cp "$INSTALLER" "$bad/install-zsh-p10k.sh"; printf '%064d  install-zsh-p10k.sh\n' 0 > "$bad/SHA256SUMS"
   check "zsh-p10k 指令裝好了" '[ -f "$h/.local/bin/zsh-p10k" ]'
-  RUN_TOOL="$h/.local/bin/zsh-p10k" ZSH_P10K_RELEASE_URL="file:///$(cygpath -m "$rel")" run_gb "$h" update -y
+  # 暫存目錄路徑有中文和泰文：原生 Windows 的 curl 寫不了這種路徑，工具要 cd 進去用相對檔名。
+  local tmpd="$WORK/暫存ชั่วคราว"; mkdir -p "$tmpd"
+  TMPDIR="$tmpd" RUN_TOOL="$h/.local/bin/zsh-p10k" ZSH_P10K_RELEASE_URL="file:///$(cygpath -m "$rel")" run_gb "$h" update -y
   check "update exit 0" '[ "$RC" -eq 0 ]'
   check "update 有核對 sha256" 'out_has "sha256 核對通過"'
   check "update 有重跑安裝" 'out_has "使用既有的 zsh"'
+  check "zsh-p10k 本身換成新版了" 'grep -q "INSTALLED_VERSION=\"9.9.9\"" "$h/.local/bin/zsh-p10k"'
+  check "暫存目錄有清掉" '[ -z "$(find "$tmpd" -mindepth 1 | head -1)" ]'
   RUN_TOOL="$h/.local/bin/zsh-p10k" ZSH_P10K_RELEASE_URL="file:///$(cygpath -m "$bad")" run_gb "$h" update -y
   check "sha256 對不上就停" '[ "$RC" -ne 0 ] && out_has "sha256 對不上"'
   check "zsh 裡打得到 zsh-p10k" '[ "$(in_zsh "$h" -c "command -v zsh-p10k")" = "$h/.local/bin/zsh-p10k" ]'

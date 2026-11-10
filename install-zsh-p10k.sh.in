@@ -2171,6 +2171,16 @@ EOS
     esac
   done
 
+  if [ "$DET_IS_MACOS" -eq 1 ]; then
+    cat <<'EOS'
+
+# macOS 的 /etc/zprofile（path_helper）會把上面這些目錄排到 /usr/bin 後面。
+# 先記下來，~/.zshrc 的 head 區段再把它們排回前面。只記家目錄底下的，不 export。
+typeset -ga _zsh_p10k_env_path
+_zsh_p10k_env_path=(${(M)path:#$HOME/*})
+EOS
+  fi
+
   printf '%s\n' "$BLOCK_ENV_END"
 }
 
@@ -2205,7 +2215,7 @@ gen_head_block() {
 # 這個區段由 install-zsh-p10k 產生，重跑安裝腳本時會被整段覆寫。
 # 想加自己的設定，請寫在這兩個標記「之外」，或寫進 ~/.zshrc.local。
 #
-# PATH 與 typeset -U 不在這裡，在 ~/.zshenv 的 env 區段。
+# PATH 與 typeset -U 不在這裡，在 ~/.zshenv 的 env 區段（macOS 例外，見下面 path_helper 那段）。
 # ~/.zshenv 一定比 ~/.zshrc 先讀，而且非互動 shell 也讀得到，所以放這裡是多的。
 EOS
 
@@ -2239,9 +2249,10 @@ EOS
 
 # macOS 開新視窗是 login shell，/etc/zprofile 的 path_helper 會把 ~/.zshenv 加的目錄
 # 排到 /usr/bin 後面，~/.local/bin 裡自己裝的指令就被系統的同名指令蓋掉。
-# 這裡把家目錄底下的目錄排回最前面；系統目錄（含 Homebrew）的順序不動。
+# 這裡只把 ~/.zshenv 讀完時就在的家目錄底下的目錄（_zsh_p10k_env_path）排回最前面；
+# ~/.zprofile 之後才加的、系統目錄（含 Homebrew）的順序都不動。
 typeset -U path PATH
-path=(${(M)path:#$HOME/*} $path)
+(( ${+_zsh_p10k_env_path} )) && path=($_zsh_p10k_env_path $path)
 EOS
   fi
 
@@ -2957,6 +2968,10 @@ do_rollback() {
 
   printf '\n'
   info "還原前的狀態存在 ${RESTORE_POINT:-（沒有東西需要備份）}"
+  # .bash_profile 是安裝時才新建的話，還原點裡沒有它，hook 會留著。
+  if file_has "$HOME/.bash_profile" "$HOOK_BEGIN"; then
+    warn "~/.bash_profile 裡還有自動切到 zsh 的 hook（這個檔案是安裝時才建的，還原點裡沒有）。要拿掉請跑 --uninstall。"
+  fi
   printf '  開一個新的終端機視窗才會看到還原後的設定。\n\n'
 }
 
@@ -3098,7 +3113,7 @@ print_summary() {
   printf '%s可以安心重跑%s：再跑一次這支腳本不會弄丟東西，它只重寫 ~/.zshrc 裡\n' "$C_DIM" "$C_RESET"
   printf '%s兩個標記包起來的區段，區段外你自己寫的內容一律不動。%s\n' "$C_DIM" "$C_RESET"
   printf '%s要移除：bash %s --uninstall%s\n' "$C_DIM" "$(basename "${BASH_SOURCE[0]:-install-zsh-p10k.sh}")" "$C_RESET"
-  if [ -f "$UPDATE_CMD" ]; then
+  if [ -f "$UPDATE_CMD" ] && file_has "$UPDATE_CMD" "$UPDATE_CMD_MARK"; then
     printf '\n%s之後要更新%s：在 zsh 裡打 zsh-p10k update（會沿用這次的選項）\n' "$C_BOLD" "$C_RESET"
     if [ "$IS_WINDOWS" -eq 1 ]; then
       printf '  在 Git Bash（還沒進 zsh）裡要打完整路徑：~/.local/bin/zsh-p10k update\n'

@@ -440,7 +440,8 @@ esac
 tty_zsh_errors() {
   local log=/tmp/tty.log fifo=/tmp/tty.in pid i last=-1 size stable=0 ready=0
   rm -f "$log" "$fifo"; mkfifo "$fifo"
-  TERM=xterm-256color script -qfc "$ZSH_BIN -i" "$log" < "$fifo" >/dev/null 2>&1 &
+  # 外面包 timeout：zsh 收到 exit 卻不結束時，fixture 不能一直卡著。
+  TERM=xterm-256color timeout 60 script -qfc "$ZSH_BIN -i" "$log" < "$fifo" >/dev/null 2>&1 &
   pid=$!
   exec 9> "$fifo"
   for i in $(seq 300); do
@@ -546,15 +547,21 @@ case "$FIXTURE" in
     # zsh 裝了卻跑不起來時，hook 要留在 bash，不能讓人連 shell 都開不了。
     # hook 會跳過 TERM=dumb，容器裡的 script 預設就是，所以要自己設。
     login_in_tty() { TERM=xterm-256color timeout 15 script -qc 'bash -l -i -c "echo STILL_BASH"' /dev/null </dev/null 2>/dev/null; }
-    check "zsh 正常時 hook 會切過去"    '! login_in_tty | grep -q STILL_BASH'
+    # 只驗「沒印 STILL_BASH」的話，script 或 bash 起不來也會過。所以要 zsh 自己留下證據：
+    # .zlogin 只有 login zsh 會讀，它寫出標記檔就代表真的切進 zsh 了。
+    # 不用印到螢幕：p10k 的 instant prompt 會把啟動時的輸出扣住，session 太快結束就不會補印。
+    printf ': > /tmp/in-zsh-login\n' > "$HOME/.zlogin"
+    switched_to_zsh() { rm -f /tmp/in-zsh-login; login_in_tty >/dev/null; [ -f /tmp/in-zsh-login ]; }
+    check "zsh 正常時 hook 會切過去"    'switched_to_zsh'
     # VS Code 主程序會設 VSCODE_PID，內建終端機全部繼承。這不能擋：VS Code 裡的終端機也要進 zsh。
-    check "VS Code 的終端機也會切過去"  '! VSCODE_PID=1234 TERM_PROGRAM=vscode login_in_tty | grep -q STILL_BASH'
+    check "VS Code 的終端機也會切過去"  'VSCODE_PID=1234 TERM_PROGRAM=vscode switched_to_zsh'
     # VS Code 讀 shell 環境時會設 VSCODE_RESOLVING_ENVIRONMENT（而且沒有 tty）。那次要留在 bash。
     check "VS Code 讀環境時留在 bash"   'VSCODE_RESOLVING_ENVIRONMENT=1 login_in_tty | grep -q STILL_BASH'
     sudo cp /usr/bin/zsh /tmp/zsh.real
     printf '#!/bin/sh\nexit 1\n' | sudo tee /usr/bin/zsh >/dev/null
     check "zsh 跑不起來時留在 bash"     'login_in_tty | grep -q STILL_BASH'
     sudo cp /tmp/zsh.real /usr/bin/zsh
+    rm -f "$HOME/.zlogin"
     ;;
   dotfiles-symlink)
     check ".zshrc 仍然是 symlink"       '[ -L "$HOME/.zshrc" ]'
@@ -649,7 +656,8 @@ if [ "$FIXTURE" = "sticky-options" ]; then
   # zsh-p10k update：從 release 抓最新的腳本，核對 SHA256SUMS，用記下的選項重跑。
   # 用 file:// 的假 release，裡面放的就是這次要測的腳本。
   mkdir -p /tmp/rel /tmp/relbad
-  cp "$INSTALLER" /tmp/rel/install-zsh-p10k.sh
+  # 版本號換掉：這樣 update 跑到一半，正在執行的 zsh-p10k 本身會被新版改寫，這條路也要測到。
+  sed 's/^SCRIPT_VERSION=".*"$/SCRIPT_VERSION="9.9.9"/' "$INSTALLER" > /tmp/rel/install-zsh-p10k.sh
   (cd /tmp/rel && sha256sum install-zsh-p10k.sh > SHA256SUMS)
   cp "$INSTALLER" /tmp/relbad/install-zsh-p10k.sh
   printf '%064d  install-zsh-p10k.sh\n' 0 > /tmp/relbad/SHA256SUMS
@@ -662,9 +670,10 @@ if [ "$FIXTURE" = "sticky-options" ]; then
   check "zsh-p10k update 結束碼為 0"    '[ "$UPD_RC" -eq 0 ]'
   [ "$UPD_RC" -eq 0 ] || tail -15 /tmp/upd.log
   check "update 有核對 sha256"          'grep -q "sha256 核對通過" /tmp/upd.log'
-  check "update 有講版本"               'grep -q "目前 .* → 最新 " /tmp/upd.log'
+  check "update 有講版本"               'grep -q "目前 .* → 最新 9.9.9" /tmp/upd.log'
+  check "zsh-p10k 本身換成新版了"       '"$HOME/.local/bin/zsh-p10k" version | grep -q "9.9.9"'
   check "update 帶了 --update"          'grep -q "會 git pull 更新" /tmp/upd.log'
-  check "update 沿用上次的選項"         'grep -qx "omz_update=disabled" "$STATE_FILE" && cmp -s /tmp/state.preupd "$STATE_FILE"'
+  check "update 沿用上次的選項"         'grep -qx "omz_update=disabled" "$STATE_FILE" && [ "$(grep -v "^version=" /tmp/state.preupd)" = "$(grep -v "^version=" "$STATE_FILE")" ]'
   check "update 沒有改 login shell"     '[ "$(getent passwd tester | cut -d: -f7)" = "$SHELL_PREUPD" ]'
   check "update 後 .zshrc 沒變"         'cmp -s /tmp/zshrc.preupd "$HOME/.zshrc"'
   check "update 沒留下暫存目錄"         '[ -z "$(find /tmp -maxdepth 1 -name "zsh-p10k-update.*" | head -1)" ]'
@@ -720,6 +729,11 @@ if [ "$FIXTURE" = "hook-fallback" ]; then
   check "hook 加在既有的 .bash_profile"  'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
   bash "$INSTALLER" --rollback -y > /tmp/rb4.log 2>&1
   check "--rollback 後 .bash_profile 回到裝之前" 'cmp -s /tmp/bash_profile.mine "$HOME/.bash_profile"'
+  # .bash_profile 是安裝時才新建的：還原點裡沒有它，hook 會留著，要講怎麼拿掉。
+  rm -f "$HOME/.bash_profile"
+  bash "$INSTALLER" -y > /tmp/run6.log 2>&1
+  bash "$INSTALLER" --rollback -y > /tmp/rb6.log 2>&1
+  check "新建的 .bash_profile 留著 hook 時，rollback 會講要 --uninstall" 'grep -q "hook.*--uninstall" /tmp/rb6.log'
 fi
 
 if [ "$FIXTURE" = "has-desktop" ]; then

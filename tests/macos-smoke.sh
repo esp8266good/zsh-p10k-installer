@@ -239,6 +239,19 @@ t_clean() {
     '[ -z "$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)" ]'
   # 新視窗是 login shell：/etc/zprofile 的 path_helper 會把 ~/.zshenv 加的目錄排到系統目錄後面。
   check "新視窗裡 ~/.local/bin 排在 /usr/bin 前面" 'local_bin_first "$h"'
+  # 使用者在 ~/.zprofile 刻意加在最後面的目錄，不能被一起拉到前面。
+  mkdir -p "$h/late/bin"
+  printf 'path+=("$HOME/late/bin")\n' > "$h/.zprofile"
+  check "~/.zprofile 加在後面的目錄還是在 /usr/bin 後面" 'late_after_usr_bin "$h"'
+  rm -f "$h/.zprofile"
+}
+
+late_after_usr_bin() {
+  local pos
+  pos="$(HOME="$1" TERM=xterm-256color zsh -l -i -c 'print -r -- POS ${path[(i)$HOME/late/bin]} ${path[(i)/usr/bin]} $#path' 2>/dev/null | grep '^POS ' | tail -1)"
+  set -- $pos
+  # 第一個數字大於路徑總數，代表根本不在 path 裡，也算失敗。
+  [ "$#" -eq 4 ] && [ "$2" -gt "$3" ] && [ "$2" -le "$4" ]
 }
 
 # login + 互動，跟 Terminal.app / iTerm2 開新視窗一樣。印出兩個目錄在 $path 裡的位置再比。
@@ -285,7 +298,9 @@ t_self_update() {
   ensure_clean_home
   local h="$CLEAN_HOME" rel="$WORK/rel" bad="$WORK/relbad"
   mkdir -p "$rel" "$bad"
-  cp "$INSTALLER" "$rel/install-zsh-p10k.sh"; (cd "$rel" && shasum -a 256 install-zsh-p10k.sh > SHA256SUMS)
+  # 版本號換掉：update 跑到一半，正在執行的 zsh-p10k 會被新版改寫。
+  sed 's/^SCRIPT_VERSION=".*"$/SCRIPT_VERSION="9.9.9"/' "$INSTALLER" > "$rel/install-zsh-p10k.sh"
+  (cd "$rel" && shasum -a 256 install-zsh-p10k.sh > SHA256SUMS)
   cp "$INSTALLER" "$bad/install-zsh-p10k.sh"; printf '%064d  install-zsh-p10k.sh\n' 0 > "$bad/SHA256SUMS"
   check "zsh-p10k 指令裝好了" '[ -x "$h/.local/bin/zsh-p10k" ]'
   check "zsh 裡打得到 zsh-p10k" '[ "$(HOME="$h" zsh -c "command -v zsh-p10k")" = "$h/.local/bin/zsh-p10k" ]'
@@ -296,6 +311,7 @@ t_self_update() {
   check "update exit 0" '[ "$RC" -eq 0 ]'
   check "update 有核對 sha256" 'out_has "sha256 核對通過"'
   check "update 沿用 --no-chsh" 'grep -qx "no_chsh=1" "$h/.config/zsh-p10k-install/options"'
+  check "zsh-p10k 本身換成新版了" 'grep -q "INSTALLED_VERSION=\"9.9.9\"" "$h/.local/bin/zsh-p10k"'
   check "沒有呼叫 sudo" 'no_sudo_called'
   RC=0
   env HOME="$h" PATH="$WORK/bin:$PATH" ZSH_P10K_RELEASE_URL="file://$bad" \
