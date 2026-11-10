@@ -447,6 +447,10 @@ case "$FIXTURE" in
     check "第二次開 zsh 沒有錯誤輸出"   '[ -z "$TTY_ERR2" ]'
     [ -z "$TTY_ERR2" ] || printf '%s\n' "$TTY_ERR2" | head -5 | sed 's/^/    | /'
     check "p10k 真的有載入"             '[ "$("$ZSH_BIN" -i -c "print -r -- \${+functions[p10k]}" 2>/dev/null | tail -1)" = 1 ]'
+    # josé、müller 這種路徑 zsh 寫得了，不能被一起關掉 instant prompt。
+    mkdir -p /tmp/josé
+    HOME=/tmp/josé bash "$INSTALLER" --dry-run > /tmp/jose.log 2>&1
+    check "josé 這種帳號不會被提醒"     '! grep -q "非 ASCII" /tmp/jose.log && grep -q "dry-run" /tmp/jose.log'
     ;;
   native-omz)
     check "pyenv 被判定為已存在而跳過"  'grep -q "已在 .zshrc 裡，跳過.*pyenv" /tmp/run1.log'

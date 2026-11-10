@@ -1641,10 +1641,10 @@ install_zsh_msys() {
   EXIT_CLEANUP=""
   "$new/usr/bin/zsh.exe" --version >/dev/null 2>&1 \
     || die "解開的 zsh 跑不起來，可能是 Git for Windows 太舊。請更新 Git for Windows 之後再試。"
-  rm -rf "$WIN_ZSH_PREFIX"
   # 剛跑過的 zsh.exe 常被防毒軟體拿去掃，掃完之前目錄換不了名字，等一下再試。
+  # 舊目錄也可能被鎖住刪不乾淨：它還在的話 mv 會把 .new 搬進它裡面，所以每次都要確認它不在了。
   try=1
-  until mv "$new" "$WIN_ZSH_PREFIX" 2>/dev/null; do
+  until rm -rf "$WIN_ZSH_PREFIX" 2>/dev/null; [ ! -e "$WIN_ZSH_PREFIX" ] && mv "$new" "$WIN_ZSH_PREFIX" 2>/dev/null; do
     [ "$try" -ge 5 ] && die "zsh 已解開在 ${new}，但換不上去（可能是防毒軟體還在掃描）。等一下再重跑一次。"
     sleep "$try"
     try=$((try + 1))
@@ -1734,14 +1734,20 @@ install_theme_and_plugins() {
 # 家目錄路徑有沒有非 ASCII 字元（例如中文帳號名稱）。
 home_is_nonascii() { printf '%s' "$HOME" | LC_ALL=C grep '[^ -~]' >/dev/null; }
 
-# zsh 的 zcompile 用絕對路徑寫不了有中日泰文的目錄（路徑裡有 0x83-0x9F 的位元組就會壞，
-# Linux、macOS、Windows 都一樣，換 locale 也沒用），p10k 每開一次視窗就會試著編譯、印一串錯誤。
+# zsh 的 zcompile、sysopen 用絕對路徑寫不了「UTF-8 編碼裡有 0x83-0xA2 位元組」的目錄
+# （zsh 內部拿這段位元組當特殊記號，寫檔前沒轉回來）。中日泰文幾乎都會中，
+# à、ő、ğ 也會；josé、müller、ñandú 不會。Linux、macOS、Windows 都一樣，換 locale 也沒用。
+home_breaks_zsh_write() {
+  printf '%s' "$HOME" | LC_ALL=C grep "$(printf '[\203-\242]')" >/dev/null
+}
+
+# p10k 每開一次視窗就會試著 zcompile 自己，在這種路徑下每次都印一串錯誤。
 # 相對路徑寫得了，所以在這裡先 cd 進去編好。p10k 看到 .zwc 比原檔新就不會再編。
 P10K_ZWC_FILES="powerlevel9k.zsh-theme powerlevel10k.zsh-theme internal/p10k.zsh internal/icons.zsh
 internal/configure.zsh internal/worker.zsh internal/parser.zsh gitstatus/gitstatus.plugin.zsh gitstatus/install"
 
 precompile_p10k() {
-  home_is_nonascii || return 0
+  home_breaks_zsh_write || return 0
   [ "$DET_HAS_EXTERNAL_P10K" -eq 1 ] && return 0
   local root="$ZSH_CUSTOM_DIR/themes/powerlevel10k" zsh="$DET_ZSH_PATH" f n=0 total=0
   [ -d "$root" ] || return 0
@@ -1755,7 +1761,9 @@ precompile_p10k() {
       n=$((n + 1))
     fi
   done
-  if [ "$n" -eq "$total" ]; then
+  if [ "$total" -eq 0 ]; then
+    warn "Powerlevel10k 裡找不到要預先編譯的檔案（可能是上游改了結構），開新視窗時可能會印 zcompile 的錯誤訊息。"
+  elif [ "$n" -eq "$total" ]; then
     ok "已預先編譯 Powerlevel10k（$n 個檔案），開新視窗不會再印 zcompile 的錯誤。"
   else
     warn "Powerlevel10k 有 $((total - n)) 個檔案預先編譯失敗，開新視窗時可能會印 zcompile 的錯誤訊息。"
@@ -2270,7 +2278,7 @@ setopt HIST_IGNORE_ALL_DUPS HIST_REDUCE_BLANKS SHARE_HISTORY
 EOS
   fi
 
-  if home_is_nonascii; then
+  if home_breaks_zsh_write; then
     cat <<'EOS'
 
 # 家目錄有中文這類字元時，zsh 寫不了 p10k 放在 ~/.cache 的 instant prompt 和狀態快取
@@ -2875,8 +2883,8 @@ main() {
   print_report
   # zsh 寫不了這種路徑下的 .zwc 和 p10k 的快取（Linux、macOS、Windows 都一樣），
   # 安裝時會繞過去，但 instant prompt 沒辦法用，要先講。
-  if home_is_nonascii; then
-    warn "你的家目錄路徑有非 ASCII 字元（例如中文帳號名稱）。zsh 寫不了這種路徑下的編譯檔和快取，所以安裝時會先編好 Powerlevel10k，並關掉它的 instant prompt（開新視窗時提示列會晚一點出現）。"
+  if home_breaks_zsh_write; then
+    warn "你的家目錄路徑有 zsh 處理不好的非 ASCII 字元（例如中文帳號名稱）。zsh 寫不了這種路徑下的編譯檔和快取，所以安裝時會先編好 Powerlevel10k，並關掉它的 instant prompt（開新視窗時提示列會晚一點出現）。之後要更新 Powerlevel10k 請加 --update 重跑這支腳本，不要自己 git pull。"
   fi
 
   if [ "$OPT_DRY_RUN" -eq 1 ]; then
