@@ -59,6 +59,7 @@ jobs:
           - font-fail
           - external-p10k
           - self-build
+          - nonascii-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

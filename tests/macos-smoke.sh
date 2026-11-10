@@ -239,6 +239,23 @@ t_clean() {
     '[ -z "$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)" ]'
 }
 
+# 家目錄有中文和泰文：zsh 的 zcompile、sysopen 用絕對路徑寫不了，p10k 每開一次視窗就印一串錯誤。
+t_nonascii_home() {
+  banner "nonascii-home"
+  local h="$WORK/使用者ผู้ใช้" err
+  mkdir -p "$h"
+  run_notty "$h" --no-chsh --no-fonts
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "事前有提醒" 'out_has "非 ASCII"'
+  err="$(HOME="$h" LANG=en_US.UTF-8 TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)"
+  check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -3 | sed 's/^/    | /'
+  # 沒有 tty 時 p10k 不會自己跑 prompt 之後的 dump，這裡直接叫那兩個函式。
+  err="$(HOME="$h" LANG=en_US.UTF-8 TERM=xterm-256color zsh -i -c '_p9k_dump_instant_prompt; _p9k_dump_state' 2>&1 >/dev/null)"
+  check "p10k 寫 cache 時沒有錯誤輸出" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -3 | sed 's/^/    | /'
+}
+
 t_rerun() {
   banner "rerun"
   ensure_clean_home
@@ -592,7 +609,8 @@ ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails
 clean rerun existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
 font-bad-hash ctrl-c-part iterm2-mdfind
 brew-p10k-append brew-p10k-full brew-p10k-not-really
-profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty"
+profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty
+nonascii-home"
 
 run_scenario() {
   case "$1" in
@@ -603,6 +621,7 @@ run_scenario() {
     dry-run-report) t_dry_run_report ;;
     clean)          t_clean ;;
     rerun)          t_rerun ;;
+    nonascii-home)  t_nonascii_home ;;
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;
     font-retry)     t_font_retry ;;

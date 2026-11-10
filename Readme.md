@@ -106,8 +106,10 @@ macOS 的 login shell 會跑 `/etc/zprofile` 裡的 `path_helper`，它可能把
 
 只支援 Git Bash。PowerShell 和 cmd 不會變成 zsh。
 
-帳號名稱有中文之類的非 ASCII 字元時，zsh 和 p10k 能用，但開新視窗可能會印出 `zcompile` 的錯誤訊息：
-MSYS2 版 zsh 的 `zcompile` 寫不了這種路徑。腳本會在動手前警告。
+家目錄路徑有中文、日文、泰文這類字元時（Windows 的中文帳號最常見，Linux、macOS 也一樣），
+zsh 本身寫不了這種路徑下的編譯檔和快取，p10k 每開一個視窗就會印一串錯誤。
+腳本會在動手前講，然後在安裝時用相對路徑先把 p10k 編好，並關掉 p10k 寫快取的動作，開新視窗就不會再印錯誤。
+代價是 p10k 的 instant prompt（先畫出提示列、其餘在背景載入）在這種帳號下沒辦法用，開新視窗時提示列會晚一點出現。
 
 ## 一次裝很多台
 

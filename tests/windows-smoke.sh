@@ -149,19 +149,26 @@ t_spaced_home() {
   check "沒有多餘的路徑警告" '! out_has "非 ASCII"'
 }
 
-# 中文帳號：MSYS2 版 zsh 的 zcompile 寫不了這種路徑，p10k 會印錯誤。
-# 要驗的是事前有講，而且 zsh 和 p10k 還是能用。
+# 中文帳號：zsh 的 zcompile、sysopen 用絕對路徑寫不了這種目錄，MSYS2 版的 autoload -R
+# 也會壞，p10k 和 compinit 每開一次視窗就印一串錯誤。安裝腳本要把這些都處理掉。
 # 路徑混了中文和泰文：不管這台 Windows 用哪個字碼頁，都一定有字元不在字碼頁裡。
 t_nonascii_home() {
   banner "nonascii-home"
-  local h="$WORK/使用者ผู้ใช้"
+  local h="$WORK/使用者ผู้ใช้" err
   mkdir -p "$h"
   run_gb "$h"
   check "exit 0" '[ "$RC" -eq 0 ]'
-  check "事前有警告" 'out_has "非 ASCII"'
+  check "事前有提醒" 'out_has "非 ASCII"'
   check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
   check "四個字型都在" '[ "$(fonts_count "$h")" = 4 ]'
   check "p10k 還是載得起來" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[p10k]}" | tail -1)" = 1 ]'
+  err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null)"
+  check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -5 | sed 's/^/    | /'
+  # 沒有 tty 時 p10k 不會自己跑 prompt 之後的 dump，這裡直接叫那兩個函式。
+  err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c '_p9k_dump_instant_prompt; _p9k_dump_state' 2>&1 >/dev/null)"
+  check "p10k 寫 cache 時沒有錯誤輸出" '[ -z "$err" ]'
+  [ -z "$err" ] || printf '%s\n' "$err" | head -5 | sed 's/^/    | /'
 }
 
 # zsh 套件的內容被換掉：要停下來，不能留下裝一半的 zsh。
@@ -181,10 +188,52 @@ if [ -n "\$url" ]; then printf 'not a package' > "\$out"; exit 0; fi
 exec "$real_curl" "\$@"
 EOF
   chmod +x "$d/curl"
-  PATH="$d:$PATH" run_gb "$h"
+  mkdir -p "$WORK/badzsh-tmp"
+  TMPDIR="$WORK/badzsh-tmp" PATH="$d:$PATH" run_gb "$h"
   check "停下來（不是 exit 0）" '[ "$RC" -ne 0 ]'
   check "輸出提到 sha256" 'out_has "sha256"'
   check "沒有裝半套 zsh" '[ ! -e "$h/.local/zsh-msys" ] && [ ! -e "$h/.local/zsh-msys.new" ]'
+  check "下載的暫存檔有清掉" '[ -z "$(find "$WORK/badzsh-tmp" -name "zstd.zip*" -o -name "zsh.tar.zst*" | head -1)" ]'
+}
+
+# MSYS2 把寫死的那個 zsh 版本下架了：兩個網址都 404。要講清楚怎麼辦，不能只說下載失敗。
+t_zsh_pkg_gone() {
+  banner "zsh-pkg-gone"
+  local h d real_curl; h="$(new_home)"; d="$WORK/gonezsh"; mkdir -p "$d"
+  real_curl="$(command -v curl)"
+  cat > "$d/curl" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in http*msys/x86_64/zsh-*) echo "curl: (22) The requested URL returned error: 404" >&2; exit 22 ;; esac
+done
+exec "$real_curl" "\$@"
+EOF
+  chmod +x "$d/curl"
+  PATH="$d:$PATH" run_gb "$h" --no-fonts
+  check "停下來（不是 exit 0）" '[ "$RC" -ne 0 ]'
+  check "講可能是版本被下架" 'out_has "下架"'
+  check "給最新版安裝腳本的網址" 'out_has "releases/latest"'
+  check "沒有裝半套 zsh" '[ ! -e "$h/.local/zsh-msys" ] && [ ! -e "$h/.local/zsh-msys.new" ]'
+}
+
+# 防毒軟體剛掃完 zsh.exe 還鎖著，換上新 zsh 的 mv 第一次失敗：要等一下重試，不能留下沒有 zsh 的狀態。
+t_zsh_mv_retry() {
+  banner "zsh-mv-retry"
+  local h d; h="$(new_home)"; d="$WORK/lockmv"; mkdir -p "$d"
+  cat > "$d/mv" <<EOF
+#!/bin/sh
+case "\$1" in
+  *zsh-msys.new)
+    if [ ! -e "$d/failed" ]; then : > "$d/failed"; echo "mv: Permission denied" >&2; exit 1; fi ;;
+esac
+exec /usr/bin/mv "\$@"
+EOF
+  chmod +x "$d/mv"
+  PATH="$d:$PATH" run_gb "$h" --no-fonts
+  check "mv 真的失敗過一次" '[ -e "$d/failed" ]'
+  check "exit 0" '[ "$RC" -eq 0 ]'
+  check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
+  check "沒有留下 zsh-msys.new" '[ ! -e "$h/.local/zsh-msys.new" ]'
 }
 
 # 字型檔在、但登錄失敗：字型清單看不到，不能說裝好了。
@@ -254,6 +303,9 @@ t_rerun() {
   check ".zshenv 沒變" '[ "$(sha_of "$h/.zshenv")" = "$b" ]'
   check "用既有的 zsh，不重新下載" 'out_has "使用既有的 zsh"'
   check "hook 只有一份" '[ "$(grep -c "BEGIN zsh-p10k-install auto start" "$h/.bash_profile")" = 1 ]'
+  # hook 一樣就不要拆掉重寫，不然每重跑一次就多一份 .bash_profile 備份。
+  check "沒有再備份 .bash_profile" '! grep -qaE "已備份 .*\.bash_profile" "$OUT"'
+  check "沒有印「已移除 hook」" '! out_has "已移除 ~/.bash_profile"'
 }
 
 # Git Bash 的 login shell 只讀 .bash_profile。使用者只有 .bashrc 時，
@@ -317,7 +369,7 @@ t_uninstall() {
 }
 
 ALL_SCENARIOS="dry-run clean rerun reg-fail no-fonts-claim no-chsh-hint uninstall
-profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash spaced-home nonascii-home"
+profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash zsh-pkg-gone zsh-mv-retry spaced-home nonascii-home"
 
 run_scenario() {
   case "$1" in
@@ -334,6 +386,8 @@ run_scenario() {
     keep-bash-login) t_keep_bash_login ;;
     profile-restored) t_profile_restored ;;
     bad-zsh-hash) t_bad_zsh_hash ;;
+    zsh-mv-retry) t_zsh_mv_retry ;;
+    zsh-pkg-gone) t_zsh_pkg_gone ;;
     spaced-home)  t_spaced_home ;;
     nonascii-home) t_nonascii_home ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;

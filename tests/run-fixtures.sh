@@ -16,7 +16,7 @@ FIXTURES=("$@")
 [ "${#FIXTURES[@]}" -eq 0 ] && FIXTURES=(
   fresh-bash zsh-no-omz v2-installed native-omz
   v2-with-user-edits has-desktop forwarded-display hook-fallback ancient-awk
-  dotfiles-symlink sticky-options font-fail external-p10k self-build
+  dotfiles-symlink sticky-options font-fail external-p10k self-build nonascii-home
 )
 
 # ancient-awk 要跑在 mawk 1.3.3 的映像上，那個映像只有它用得到。
