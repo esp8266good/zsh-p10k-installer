@@ -382,7 +382,7 @@ fi
 ZSH_BIN="$(command -v zsh || echo /usr/bin/zsh)"
 
 check ".zshrc 存在"                     '[ -s "$HOME/.zshrc" ]'
-check ".zshrc 語法正確 (zsh -n)"        '"$ZSH_BIN" -n "$HOME/.zshrc"'
+check ".zshrc 語法正確（zsh -n）"       '"$ZSH_BIN" -n "$HOME/.zshrc"'
 check "head 區段只有一個"               '[ "$(count "$HOME/.zshrc" "# >>> zsh-p10k-install: head >>>")" = 1 ]'
 check "tail 區段只有一個"               '[ "$(count "$HOME/.zshrc" "# >>> zsh-p10k-install: tail >>>")" = 1 ]'
 check "instant prompt 區段只有一個"     '[ "$(grep -c "^if \[\[ -r \"\${XDG_CACHE_HOME" "$HOME/.zshrc")" = 1 ]'
@@ -399,11 +399,13 @@ check "omz 更新提示預設為 prompt"       'grep -q "zstyle .:omz:update. mo
 check "~/.p10k.zsh 已產生且夠大"        '[ "$(wc -c < "$HOME/.p10k.zsh")" -gt 90000 ]'
 check "互動式 zsh 能載入"               '"$ZSH_BIN" -i -c "print READY" 2>/dev/null | grep -q READY'
 check "備份沒有散在家目錄"              '! find "$HOME" -maxdepth 1 -name ".zshrc.backup.*" | grep -q .'
+check "zsh-p10k 指令裝好了"             '[ -x "$HOME/.local/bin/zsh-p10k" ]'
+check "zsh 裡打得到 zsh-p10k"           '[ "$("$ZSH_BIN" -c "command -v zsh-p10k" 2>/dev/null)" = "$HOME/.local/bin/zsh-p10k" ]'
 
 case "$FIXTURE" in
   v2-installed|native-omz)
     check "偵測為附加模式"              'grep -q "附加模式" /tmp/run1.log'
-    check "使用者原有內容保留 (sentinel)" 'grep -qF "$SENTINEL" "$HOME/.zshrc"'
+    check "使用者原有內容保留（sentinel）" 'grep -qF "$SENTINEL" "$HOME/.zshrc"'
     ;;
   sticky-options)
     check "偵測為完整模式"              'grep -q "完整模式" /tmp/run1.log'
@@ -430,12 +432,31 @@ case "$FIXTURE" in
     ;;
 esac
 
-# 開一個有 tty 的互動 zsh，停一下讓 p10k 跑完 prompt 之後的 dump，再離開。
+# 開一個有 tty 的互動 zsh，等 p10k 跑完 prompt 之後的 dump，再離開。
 # 印出 zsh 或 p10k 的錯誤行；沒有錯誤就什麼都不印。
-# 用 sleep 是因為 dump 掛在 zle 等輸入時才跑，輸入太早到它就不會跑，測試會假性通過。
+# dump 掛在 zle 等輸入時才跑，輸入太早到它就不會跑，測試會假性通過。
+# 所以不用固定秒數：等 zle 開始讀輸入（送出 bracketed paste 開啟序列 ESC[?2004h），
+# 再等輸出停下來 0.5 秒，才送 exit。最多等 30 秒，等不到就印 TTY_TIMEOUT 讓檢查失敗。
 tty_zsh_errors() {
-  { sleep 3; echo exit; sleep 1; } \
-    | TERM=xterm-256color script -qfc "$ZSH_BIN -i" /dev/null 2>&1 | tr -d '\r' \
+  local log=/tmp/tty.log fifo=/tmp/tty.in pid i last=-1 size stable=0 ready=0
+  rm -f "$log" "$fifo"; mkfifo "$fifo"
+  TERM=xterm-256color script -qfc "$ZSH_BIN -i" "$log" < "$fifo" >/dev/null 2>&1 &
+  pid=$!
+  exec 9> "$fifo"
+  for i in $(seq 300); do
+    if [ "$ready" -eq 0 ] && grep -qaF $'\e[?2004h' "$log" 2>/dev/null; then ready=1; fi
+    if [ "$ready" -eq 1 ]; then
+      size="$(wc -c < "$log")"
+      if [ "$size" = "$last" ]; then stable=$((stable + 1)); else stable=0; last="$size"; fi
+      [ "$stable" -ge 5 ] && break
+    fi
+    sleep 0.1
+  done
+  [ "$stable" -ge 5 ] || echo "TTY_TIMEOUT（${i} 次、zle ready=$ready）"
+  echo exit >&9
+  exec 9>&-
+  wait "$pid" 2>/dev/null
+  tr -d '\r' < "$log" \
     | grep -aE 'zwc|sysopen|definition file not found|no such file|command not found' || true
 }
 
@@ -484,7 +505,7 @@ case "$FIXTURE" in
           '[ "$(grep -c "^if \[ -f ~/.bash_aliases \]; then$" "$HOME/.zshrc")" -ge 1 ]'
     check "使用者的 pyenv 行還在"       'grep -q "eval \"\$(pyenv init - zsh)\"" "$HOME/.zshrc"'
     check "p10k configure 寫的那行還在" 'grep -qF "[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh" "$HOME/.zshrc"'
-    check "使用者原有內容保留 (sentinel)" 'grep -qF "$SENTINEL" "$HOME/.zshrc"'
+    check "使用者原有內容保留（sentinel）" 'grep -qF "$SENTINEL" "$HOME/.zshrc"'
     check "沒有孤兒 fi（zsh -n 已驗）"   '"$ZSH_BIN" -n "$HOME/.zshrc"'
     ;;
   has-desktop)
@@ -526,6 +547,10 @@ case "$FIXTURE" in
     # hook 會跳過 TERM=dumb，容器裡的 script 預設就是，所以要自己設。
     login_in_tty() { TERM=xterm-256color timeout 15 script -qc 'bash -l -i -c "echo STILL_BASH"' /dev/null </dev/null 2>/dev/null; }
     check "zsh 正常時 hook 會切過去"    '! login_in_tty | grep -q STILL_BASH'
+    # VS Code 主程序會設 VSCODE_PID，內建終端機全部繼承。這不能擋：VS Code 裡的終端機也要進 zsh。
+    check "VS Code 的終端機也會切過去"  '! VSCODE_PID=1234 TERM_PROGRAM=vscode login_in_tty | grep -q STILL_BASH'
+    # VS Code 讀 shell 環境時會設 VSCODE_RESOLVING_ENVIRONMENT（而且沒有 tty）。那次要留在 bash。
+    check "VS Code 讀環境時留在 bash"   'VSCODE_RESOLVING_ENVIRONMENT=1 login_in_tty | grep -q STILL_BASH'
     sudo cp /usr/bin/zsh /tmp/zsh.real
     printf '#!/bin/sh\nexit 1\n' | sudo tee /usr/bin/zsh >/dev/null
     check "zsh 跑不起來時留在 bash"     'login_in_tty | grep -q STILL_BASH'
@@ -561,7 +586,7 @@ if [ -n "$ORIG_MODE" ]; then
           '[ -f "$(find "$HOME/.zsh-p10k-backups" -mindepth 1 -maxdepth 1 -type d)/.zshenv" ]'
   fi
   check "還原點目錄權限為 700"          '[ "$(stat -c "%a" "$HOME/.zsh-p10k-backups")" = 700 ]'
-  check "備份權限與原檔相同 ($ORIG_MODE)" \
+  check "備份權限與原檔相同（$ORIG_MODE）" \
         '[ "$(stat -c "%a" "$(find "$HOME/.zsh-p10k-backups" -name .zshrc | head -1)")" = "$ORIG_MODE" ]'
   check ".zshrc 權限沒有被偷改"          '[ "$(stat -L -c "%a" "$HOME/.zshrc")" = "$ORIG_MODE" ]'
   check "--rollback 找得到還原點"        'bash "$INSTALLER" --rollback -y > /tmp/rb.log 2>&1 && grep -q "已還原" /tmp/rb.log'
@@ -620,6 +645,38 @@ if [ "$FIXTURE" = "sticky-options" ]; then
   check "沒有狀態檔時從 head 區段推回選項" 'cmp -s /tmp/zshrc.run1 "$HOME/.zshrc"'
   check "命令列明講時會覆蓋記下的選項" \
         'bash "$INSTALLER" -y --omz-update disabled > /tmp/run2c.log 2>&1 && grep -qx "omz_update=disabled" "$STATE_FILE"'
+
+  # zsh-p10k update：從 release 抓最新的腳本，核對 SHA256SUMS，用記下的選項重跑。
+  # 用 file:// 的假 release，裡面放的就是這次要測的腳本。
+  mkdir -p /tmp/rel /tmp/relbad
+  cp "$INSTALLER" /tmp/rel/install-zsh-p10k.sh
+  (cd /tmp/rel && sha256sum install-zsh-p10k.sh > SHA256SUMS)
+  cp "$INSTALLER" /tmp/relbad/install-zsh-p10k.sh
+  printf '%064d  install-zsh-p10k.sh\n' 0 > /tmp/relbad/SHA256SUMS
+  cp "$HOME/.zshrc" /tmp/zshrc.preupd
+  # 前面測過「沒有狀態檔」的情況，選項和 login shell 已經不是一開始那樣了，所以跟 update 前的狀態比。
+  cp "$STATE_FILE" /tmp/state.preupd
+  SHELL_PREUPD="$(getent passwd tester | cut -d: -f7)"
+  ZSH_P10K_RELEASE_URL=file:///tmp/rel "$HOME/.local/bin/zsh-p10k" update -y > /tmp/upd.log 2>&1
+  UPD_RC=$?
+  check "zsh-p10k update 結束碼為 0"    '[ "$UPD_RC" -eq 0 ]'
+  [ "$UPD_RC" -eq 0 ] || tail -15 /tmp/upd.log
+  check "update 有核對 sha256"          'grep -q "sha256 核對通過" /tmp/upd.log'
+  check "update 有講版本"               'grep -q "目前 .* → 最新 " /tmp/upd.log'
+  check "update 帶了 --update"          'grep -q "會 git pull 更新" /tmp/upd.log'
+  check "update 沿用上次的選項"         'grep -qx "omz_update=disabled" "$STATE_FILE" && cmp -s /tmp/state.preupd "$STATE_FILE"'
+  check "update 沒有改 login shell"     '[ "$(getent passwd tester | cut -d: -f7)" = "$SHELL_PREUPD" ]'
+  check "update 後 .zshrc 沒變"         'cmp -s /tmp/zshrc.preupd "$HOME/.zshrc"'
+  check "update 沒留下暫存目錄"         '[ -z "$(find /tmp -maxdepth 1 -name "zsh-p10k-update.*" | head -1)" ]'
+  ZSH_P10K_RELEASE_URL=file:///tmp/relbad "$HOME/.local/bin/zsh-p10k" update -y > /tmp/updbad.log 2>&1
+  UPD_RC=$?
+  check "sha256 對不上時停下來"         '[ "$UPD_RC" -ne 0 ] && grep -q "sha256 對不上" /tmp/updbad.log'
+  check "sha256 對不上時沒有跑安裝"     '! grep -q "偵測環境" /tmp/updbad.log'
+  ZSH_P10K_RELEASE_URL=file:///tmp/nowhere "$HOME/.local/bin/zsh-p10k" update -y > /tmp/updnone.log 2>&1
+  UPD_RC=$?
+  check "下載失敗時停下來並講清楚"     '[ "$UPD_RC" -ne 0 ] && grep -q "下載失敗" /tmp/updnone.log'
+  USAGE_OUT="$("$HOME/.local/bin/zsh-p10k" 2>&1)"; USAGE_RC=$?
+  check "zsh-p10k 不帶參數會印用法並回 2" '[ "$USAGE_RC" -eq 2 ] && printf "%s" "$USAGE_OUT" | grep -q "zsh-p10k update"'
 fi
 
 echo "--- 解除安裝 ---"
@@ -647,9 +704,36 @@ fi
 check "oh-my-zsh 沒有被刪掉"            '[ -d "$HOME/.oh-my-zsh" ]'
 check "~/.p10k.zsh 沒有被刪掉"          '[ -f "$HOME/.p10k.zsh" ]'
 check "記錄選項的檔案已移除"            '[ ! -f "$STATE_FILE" ]'
+check "zsh-p10k 指令已移除"             '[ ! -e "$HOME/.local/bin/zsh-p10k" ]'
 if [ "$FIXTURE" = "dotfiles-symlink" ]; then
   check "解除安裝後 .zshrc 仍然是 symlink" '[ -L "$HOME/.zshrc" ]'
   check "解除安裝後 .zshenv 與原檔相同"   'cmp -s /tmp/zshenv.orig "$HOME/.zshenv"'
+fi
+
+if [ "$FIXTURE" = "hook-fallback" ]; then
+  # 本來就有 .bash_profile、hook 加在它後面：--rollback 要連 hook 一起還原掉，
+  # 不然 .zshrc 回到裝之前，開 bash 卻還是被切進 zsh。
+  echo "--- 有 .bash_profile 時裝完再 --rollback ---"
+  printf 'export MINE=1\n# keep\n' > "$HOME/.bash_profile"
+  cp "$HOME/.bash_profile" /tmp/bash_profile.mine
+  bash "$INSTALLER" -y > /tmp/run4.log 2>&1
+  check "hook 加在既有的 .bash_profile"  'grep -q "zsh-p10k-install auto start" "$HOME/.bash_profile"'
+  bash "$INSTALLER" --rollback -y > /tmp/rb4.log 2>&1
+  check "--rollback 後 .bash_profile 回到裝之前" 'cmp -s /tmp/bash_profile.mine "$HOME/.bash_profile"'
+fi
+
+if [ "$FIXTURE" = "has-desktop" ]; then
+  # sha256sum 自己失敗（例如讀不了檔）：不能說「沒有 sha256sum」，也不能說「實際 」是空的。
+  echo "--- sha256sum 讀檔失敗 ---"
+  mkdir -p /tmp/shafail
+  printf '#!/bin/sh\necho "sha256sum: $1: Input/output error" >&2\nexit 1\n' > /tmp/shafail/sha256sum
+  chmod +x /tmp/shafail/sha256sum
+  rm -f "$HOME/.local/share/fonts/MesloLGS-NF/MesloLGS NF Bold.ttf"
+  PATH="/tmp/shafail:$PATH" bash "$INSTALLER" -y --no-chsh > /tmp/run5.log 2>&1
+  check "沒有誤報「沒有 sha256sum」"      '! grep -q "沒有 sha256sum 也沒有 shasum" /tmp/run5.log'
+  check "沒有印空的 sha256"               '! grep -q "實際 ）" /tmp/run5.log'
+  check "講是算不出 sha256"               'grep -q "算不出 .*sha256" /tmp/run5.log'
+  check "沒有留下沒驗過的字型"           '[ ! -e "$HOME/.local/share/fonts/MesloLGS-NF/MesloLGS NF Bold.ttf" ]'
 fi
 
 printf '\n\033[1m%s: %d passed, %d failed\033[0m\n' "$FIXTURE" "$PASS" "$FAIL"

@@ -27,6 +27,16 @@ curl -fsSL https://github.com/esp8266good/zsh-p10k-installer/releases/latest/dow
 
 套件只在缺的時候才裝，永遠不跑 `apt upgrade`。
 
+## 之後要更新
+
+```bash
+zsh-p10k update        # 加 -y 就不等確認
+```
+
+它會下載最新版的安裝腳本和 `SHA256SUMS`，核對 sha256 之後帶 `--update` 重跑，選項沿用上次安裝時的。
+`SHA256SUMS` 跟腳本是從同一個 Release 下載的，所以它擋得住下載壞掉，擋不住有人換掉整個 Release。
+這個指令放在 `~/.local/bin/zsh-p10k`，bash 裡也跑得了（zsh 設定壞掉時可以拿來修）。
+
 ## 出錯了想回去
 
 ```bash
@@ -47,6 +57,7 @@ bash ~/install-zsh-p10k.sh --uninstall    # 移除腳本寫入的區段與 hook
 | `~/.p10k.zsh` | 只在不存在時寫入內建的設定 |
 | `~/.oh-my-zsh` | 缺才裝 |
 | `~/.bash_profile` | 只在 `chsh` 失敗時加一段自動切到 zsh 的 hook |
+| `~/.local/bin/zsh-p10k` | `zsh-p10k update` 指令，每次安裝時更新 |
 
 PATH 放在 `~/.zshenv` 是因為 **zsh 只有互動式 shell 會讀 `~/.zshrc`**。
 `ssh host command`、scp、Claude Code 這類 agent 只讀得到 `~/.zshenv`。
@@ -90,8 +101,9 @@ p10k 的圖示要 MesloLGS NF 字型，而且要裝在**你眼睛看著的那個
 新的 profile 叫「zsh-p10k (MesloLGS NF)」。要讓新視窗都用它：iTerm2 → Settings → Profiles，選它，按 Other Actions → Set as Default。
 不想要了就刪掉 `~/Library/Application Support/iTerm2/DynamicProfiles/zsh-p10k.json`。
 
-macOS 的 login shell 會跑 `/etc/zprofile` 裡的 `path_helper`，它可能把 `~/.zshenv` 加的 PATH 排到系統路徑後面。
-遇到自己裝的指令被 `/usr/bin` 的同名指令蓋掉時，把那段 PATH 改寫到 `~/.zshrc.local`。
+macOS 開新視窗是 login shell，會跑 `/etc/zprofile` 裡的 `path_helper`，每次都把 `~/.zshenv` 加的目錄排到 `/usr/bin` 後面
+（在 macOS 上實測過）。所以 `~/.zshrc` 的 head 區段會再把家目錄底下的目錄（`~/.local/bin`、`~/bin`、pyenv、cargo…）排回最前面，
+`~/.local/bin` 裡自己裝的指令就不會被系統的同名指令蓋掉。系統目錄的順序不動，你在 `~/.zprofile` 加的 Homebrew 還是排在 `/usr/bin` 前面。
 
 ## Windows 10 / 11
 
@@ -101,8 +113,9 @@ macOS 的 login shell 會跑 `/etc/zprofile` 裡的 `path_helper`，它可能把
 | 情況 | 腳本怎麼處理 |
 |---|---|
 | zsh | Git Bash 沒有 zsh，腳本下載 MSYS2 編好的 zsh（核對 sha256），解開放在 `~/.local/zsh-msys` |
-| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
+| 開 Git Bash 時自動進 zsh | Windows 沒有 `chsh`，改在 `~/.bash_profile` 加一段 hook。VS Code 裡的 Git Bash 也會切。設 `DISABLE_AUTO_ZSH=1` 可以繞過 |
 | 字型 | 裝到這個 Windows 帳號的字型目錄並登錄，然後要自己把終端機字型改成 MesloLGS NF（結尾會教） |
+| Windows Terminal | 多一個「Git Bash (zsh)」設定檔，字型已經是 MesloLGS NF。用 Windows Terminal 的 fragment 加，**不動你的 `settings.json`**；`--uninstall` 會拿掉 |
 
 只支援 Git Bash。PowerShell 和 cmd 不會變成 zsh。
 
@@ -111,7 +124,7 @@ zsh 本身寫不了這種路徑下的編譯檔和快取，p10k 每開一個視�
 （`josé`、`müller` 這類路徑沒有這個問題，不受影響。）
 腳本會在動手前講，然後在安裝時用相對路徑先把 p10k 編好，並關掉 p10k 寫快取的動作，開新視窗就不會再印錯誤。
 代價是 p10k 的 instant prompt（先畫出提示列、其餘在背景載入）在這種帳號下沒辦法用，開新視窗時提示列會晚一點出現。
-之後要更新 p10k 請重跑安裝腳本（加 `--update`），不要自己 `git pull`，不然錯誤會回來。
+之後要更新 p10k 請用 `zsh-p10k update`（或重跑安裝腳本加 `--update`），不要自己 `git pull`，不然錯誤會回來。
 
 ## 一次裝很多台
 

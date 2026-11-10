@@ -237,6 +237,16 @@ t_clean() {
   check "沒有呼叫 sudo" 'no_sudo_called'
   check "zsh -i 啟動沒有錯誤輸出" \
     '[ -z "$(HOME="$h" TERM=xterm-256color zsh -i -c exit 2>&1 >/dev/null)" ]'
+  # 新視窗是 login shell：/etc/zprofile 的 path_helper 會把 ~/.zshenv 加的目錄排到系統目錄後面。
+  check "新視窗裡 ~/.local/bin 排在 /usr/bin 前面" 'local_bin_first "$h"'
+}
+
+# login + 互動，跟 Terminal.app / iTerm2 開新視窗一樣。印出兩個目錄在 $path 裡的位置再比。
+local_bin_first() {
+  local pos
+  pos="$(HOME="$1" TERM=xterm-256color zsh -l -i -c 'print -r -- POS ${path[(i)$HOME/.local/bin]} ${path[(i)/usr/bin]}' 2>/dev/null | grep '^POS ' | tail -1)"
+  set -- $pos
+  [ "$#" -eq 3 ] && [ "$2" -lt "$3" ]
 }
 
 # 家目錄有中文和泰文：zsh 的 zcompile、sysopen 用絕對路徑寫不了，p10k 每開一次視窗就印一串錯誤。
@@ -266,6 +276,31 @@ t_rerun() {
   check ".zshrc 沒變" '[ "$(sha_of "$h/.zshrc")" = "$a" ]'
   check ".zshenv 沒變" '[ "$(sha_of "$h/.zshenv")" = "$b" ]'
   check ".p10k.zsh 沒變" '[ "$(sha_of "$h/.p10k.zsh")" = "$c" ]'
+}
+
+# zsh-p10k update：從 release 下載最新的腳本，核對 SHA256SUMS 再重跑。用 file:// 的假 release。
+# macOS 13 沒有 sha256sum，工具要會退回 shasum。
+t_self_update() {
+  banner "self-update"
+  ensure_clean_home
+  local h="$CLEAN_HOME" rel="$WORK/rel" bad="$WORK/relbad"
+  mkdir -p "$rel" "$bad"
+  cp "$INSTALLER" "$rel/install-zsh-p10k.sh"; (cd "$rel" && shasum -a 256 install-zsh-p10k.sh > SHA256SUMS)
+  cp "$INSTALLER" "$bad/install-zsh-p10k.sh"; printf '%064d  install-zsh-p10k.sh\n' 0 > "$bad/SHA256SUMS"
+  check "zsh-p10k 指令裝好了" '[ -x "$h/.local/bin/zsh-p10k" ]'
+  check "zsh 裡打得到 zsh-p10k" '[ "$(HOME="$h" zsh -c "command -v zsh-p10k")" = "$h/.local/bin/zsh-p10k" ]'
+  RC=0
+  env HOME="$h" PATH="$WORK/bin:$PATH" ZSH_P10K_RELEASE_URL="file://$rel" \
+    perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!"' \
+    bash "$h/.local/bin/zsh-p10k" update -y < /dev/null > "$OUT" 2>&1 || RC=$?
+  check "update exit 0" '[ "$RC" -eq 0 ]'
+  check "update 有核對 sha256" 'out_has "sha256 核對通過"'
+  check "update 沿用 --no-chsh" 'grep -qx "no_chsh=1" "$h/.config/zsh-p10k-install/options"'
+  check "沒有呼叫 sudo" 'no_sudo_called'
+  RC=0
+  env HOME="$h" PATH="$WORK/bin:$PATH" ZSH_P10K_RELEASE_URL="file://$bad" \
+    bash "$h/.local/bin/zsh-p10k" update -y < /dev/null > "$OUT" 2>&1 || RC=$?
+  check "sha256 對不上就停" '[ "$RC" -ne 0 ] && out_has "sha256 對不上"'
 }
 
 t_existing_setup() {
@@ -606,7 +641,7 @@ t_iterm2_notty() {
 }
 
 ALL_SCENARIOS="no-clt-notty no-clt-tty-no no-clt-dryrun-tty no-clt-install-fails dry-run-report
-clean rerun existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
+clean rerun self-update existing-setup uninstall-hint font-retry font-all-fail font-partial-rerun
 font-bad-hash ctrl-c-part iterm2-mdfind
 brew-p10k-append brew-p10k-full brew-p10k-not-really
 profile-yes profile-keep profile-notty profile-tty-yes iterm2-install bad-hash iterm2-notty
@@ -621,6 +656,7 @@ run_scenario() {
     dry-run-report) t_dry_run_report ;;
     clean)          t_clean ;;
     rerun)          t_rerun ;;
+    self-update)    t_self_update ;;
     nonascii-home)  t_nonascii_home ;;
     existing-setup) t_existing_setup ;;
     uninstall-hint) t_uninstall_hint ;;

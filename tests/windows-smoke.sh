@@ -73,7 +73,7 @@ run_gb() {
   RC=0
   env HOME="$home" LOCALAPPDATA="$(cygpath -w "$home/appdata")" \
     GIT_CONFIG_GLOBAL="$WORK/gitconfig" ZSH_P10K_WIN_FONT_KEY="${RUN_FONT_KEY:-$FONT_KEY}" \
-    PATH="$WORK/bin:$PATH" bash "$INSTALLER" "$@" < /dev/null > "$OUT" 2>&1 || RC=$?
+    PATH="$WORK/bin:$PATH" bash "${RUN_TOOL:-$INSTALLER}" "$@" < /dev/null > "$OUT" 2>&1 || RC=$?
 }
 
 out_has() { grep -qaF -- "$1" "$OUT"; }
@@ -83,6 +83,19 @@ fonts_dir() { printf '%s/appdata/Microsoft/Windows/Fonts' "$1"; }
 fonts_count() { find "$(fonts_dir "$1")" -maxdepth 1 -name 'MesloLGS NF *.ttf' 2>/dev/null | wc -l | tr -d ' '; }
 font_values() { MSYS_NO_PATHCONV=1 reg query "$FONT_KEY" 2>/dev/null | grep -c 'MesloLGS NF .*(TrueType)'; }
 zsh_exe() { printf '%s/.local/zsh-msys/usr/bin/zsh.exe' "$1"; }
+wt_fragment() { printf '%s/appdata/Microsoft/Windows Terminal/Fragments/zsh-p10k-install/zsh-p10k.json' "$1"; }
+# wt_field <home> <PowerShell 運算式>：用 PowerShell 的 JSON 解析器讀 fragment，WT 讀不懂的 JSON 它也讀不懂。
+wt_field() {
+  local f; f="$(cygpath -w "$(wt_fragment "$1")")"
+  powershell.exe -NoProfile -Command "\$j = [IO.File]::ReadAllText('$f', [Text.Encoding]::UTF8) | ConvertFrom-Json; $2" 2>/dev/null | tr -d '\r'
+}
+# 把 fragment 裡的 commandline 原封不動放進 .bat 執行，跟 Windows Terminal 開分頁一樣交給 CreateProcess。
+# stdin 餵指令進去，zsh 沒有 tty 時會從 stdin 讀指令。
+wt_launch() {
+  local h="$1" bat="$WORK/wt-launch.bat"
+  { printf '@echo off\r\n'; wt_field "$h" '$j.profiles[0].commandline'; printf '\r\n'; } > "$bat"
+  printf '%s\n' "$2" | HOME="$h" cmd.exe //c "$(cygpath -w "$bat")" 2>&1 | tr -d '\r'
+}
 # 用裝好的 zsh 在暫存 HOME 跑一段指令，只留 stdout。
 in_zsh() { local h="$1"; shift; HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" "$@" 2>/dev/null; }
 crlf_files() {
@@ -169,6 +182,7 @@ t_nonascii_home() {
   err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c '_p9k_dump_instant_prompt; _p9k_dump_state' 2>&1 >/dev/null)"
   check "p10k 寫 cache 時沒有錯誤輸出" '[ -z "$err" ]'
   [ -z "$err" ] || printf '%s\n' "$err" | head -5 | sed 's/^/    | /'
+  check "Windows Terminal 的 commandline 開得起 zsh" 'wt_launch "$h" "print -r -- ZV=\$ZSH_VERSION" | grep -q "^ZV=5\."'
 }
 
 # zsh 套件的內容被換掉：要停下來，不能留下裝一半的 zsh。
@@ -303,6 +317,7 @@ t_rerun() {
   check ".zshenv 沒變" '[ "$(sha_of "$h/.zshenv")" = "$b" ]'
   check "用既有的 zsh，不重新下載" 'out_has "使用既有的 zsh"'
   check "hook 只有一份" '[ "$(grep -c "BEGIN zsh-p10k-install auto start" "$h/.bash_profile")" = 1 ]'
+  check "Windows Terminal 設定檔沒有重寫" '! out_has "已寫入 Windows Terminal"'
   # hook 一樣就不要拆掉重寫，不然每重跑一次就多一份 .bash_profile 備份。
   check "沒有再備份 .bash_profile" '! grep -qaE "已備份 .*\.bash_profile" "$OUT"'
   check "沒有印「已移除 hook」" '! out_has "已移除 ~/.bash_profile"'
@@ -366,10 +381,65 @@ t_uninstall() {
   check "有教怎麼刪 zsh" 'out_has "rm -rf ~/.local/zsh-msys"'
   check "有提醒本來就有的字型要保留" 'out_has "之前就有"'
   check "沒有教 chsh（Git Bash 沒有這個指令）" '! out_has "chsh"'
+  check "Windows Terminal 設定檔已移除" '[ ! -e "$(wt_fragment "$h")" ] && [ ! -d "$(dirname "$(wt_fragment "$h")")" ]'
+  check "zsh-p10k 指令已移除" '[ ! -e "$h/.local/bin/zsh-p10k" ]'
 }
 
-ALL_SCENARIOS="dry-run clean rerun reg-fail no-fonts-claim no-chsh-hint uninstall
-profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash zsh-pkg-gone zsh-mv-retry spaced-home nonascii-home"
+# Windows Terminal 多一個「Git Bash (zsh)」設定檔，字型是 MesloLGS NF。用 fragment，不碰 settings.json。
+t_wt_profile() {
+  banner "wt-profile"
+  ensure_clean_home
+  local h="$CLEAN_HOME" f; f="$(wt_fragment "$h")"
+  check "fragment 檔在" '[ -f "$f" ]'
+  check "沒有 BOM" '[ "$(head -c 3 "$f" | od -An -tx1 | tr -d " ")" != "efbbbf" ]'
+  check "名稱是 Git Bash (zsh)" '[ "$(wt_field "$h" "\$j.profiles[0].name")" = "Git Bash (zsh)" ]'
+  check "GUID 是固定的那個" '[ "$(wt_field "$h" "\$j.profiles[0].guid")" = "{ad4e1882-2152-55a3-950c-b935933e73df}" ]'
+  check "字型是 MesloLGS NF" '[ "$(wt_field "$h" "\$j.profiles[0].font.face")" = "MesloLGS NF" ]'
+  local icon; icon="$(wt_field "$h" "\$j.profiles[0].icon")"
+  check "icon 指到 Git 真的有的圖示檔" '[ -n "$icon" ] && [ -f "$(cygpath -u "$icon")" ]'
+  check "commandline 開得起 zsh" 'wt_launch "$h" "print -r -- ZV=\$ZSH_VERSION" | grep -q "^ZV=5\."'
+  check "SHELL 指向 zsh" 'wt_launch "$h" "print -r -- SH=\$SHELL" | grep -q "^SH=.*zsh.exe$"'
+  check "結尾有講 Windows Terminal 的設定檔" 'out_has "Git Bash (zsh)"'
+  local h2; h2="$(new_home)"
+  run_gb "$h2" --no-fonts
+  check "--no-fonts 時不指定字型（不然 WT 會跳找不到字型）" \
+    '[ "$(wt_field "$h2" "\$j.profiles[0].name")" = "Git Bash (zsh)" ] && [ -z "$(wt_field "$h2" "\$j.profiles[0].font.face")" ]'
+  check "--dry-run 不寫 fragment" 'h3="$(new_home)"; run_gb "$h3" --dry-run; [ ! -e "$(wt_fragment "$h3")" ]'
+}
+
+# 本來就有 .bash_profile：裝完馬上 --rollback，hook 也要跟著還原掉。
+t_rollback_hook() {
+  banner "rollback-hook"
+  local h; h="$(new_home)"
+  printf 'export MINE=1\n# keep\n' > "$h/.bash_profile"
+  cp "$h/.bash_profile" "$WORK/profile.rb"
+  run_gb "$h" --no-fonts
+  check "裝好有 hook" 'grep -q "zsh-p10k-install auto start" "$h/.bash_profile"'
+  run_gb "$h" --rollback -y
+  check "rollback exit 0" '[ "$RC" -eq 0 ]'
+  check "rollback 後 .bash_profile 回到裝之前" 'cmp -s "$WORK/profile.rb" "$h/.bash_profile"'
+}
+
+# zsh-p10k update：從 release 下載最新的腳本，核對 SHA256SUMS 再重跑。用 file:// 的假 release。
+t_self_update() {
+  banner "self-update"
+  ensure_clean_home
+  local h="$CLEAN_HOME" rel="$WORK/rel" bad="$WORK/relbad"
+  mkdir -p "$rel" "$bad"
+  cp "$INSTALLER" "$rel/install-zsh-p10k.sh"; (cd "$rel" && sha256sum install-zsh-p10k.sh > SHA256SUMS)
+  cp "$INSTALLER" "$bad/install-zsh-p10k.sh"; printf '%064d  install-zsh-p10k.sh\n' 0 > "$bad/SHA256SUMS"
+  check "zsh-p10k 指令裝好了" '[ -f "$h/.local/bin/zsh-p10k" ]'
+  RUN_TOOL="$h/.local/bin/zsh-p10k" ZSH_P10K_RELEASE_URL="file:///$(cygpath -m "$rel")" run_gb "$h" update -y
+  check "update exit 0" '[ "$RC" -eq 0 ]'
+  check "update 有核對 sha256" 'out_has "sha256 核對通過"'
+  check "update 有重跑安裝" 'out_has "使用既有的 zsh"'
+  RUN_TOOL="$h/.local/bin/zsh-p10k" ZSH_P10K_RELEASE_URL="file:///$(cygpath -m "$bad")" run_gb "$h" update -y
+  check "sha256 對不上就停" '[ "$RC" -ne 0 ] && out_has "sha256 對不上"'
+  check "zsh 裡打得到 zsh-p10k" '[ "$(in_zsh "$h" -c "command -v zsh-p10k")" = "$h/.local/bin/zsh-p10k" ]'
+}
+
+ALL_SCENARIOS="dry-run clean rerun wt-profile self-update reg-fail no-fonts-claim no-chsh-hint uninstall
+rollback-hook profile-restored keep-bashrc keep-bash-login existing-zsh font-fail bad-zsh-hash zsh-pkg-gone zsh-mv-retry spaced-home nonascii-home"
 
 run_scenario() {
   case "$1" in
@@ -390,6 +460,9 @@ run_scenario() {
     zsh-pkg-gone) t_zsh_pkg_gone ;;
     spaced-home)  t_spaced_home ;;
     nonascii-home) t_nonascii_home ;;
+    wt-profile)   t_wt_profile ;;
+    rollback-hook) t_rollback_hook ;;
+    self-update)  t_self_update ;;
     *) echo "不認得的情境：$1" >&2; FAIL=$((FAIL+1)) ;;
   esac
 }

@@ -32,12 +32,15 @@ tag 跟 `SCRIPT_VERSION` 對不上，CI 直接失敗。
 | `v2-installed` | v2 裝過，骨架一字未動 | 認不出是 v2 寫的 |
 | `v2-with-user-edits` | 樹莓派：使用者的行夾在 v2 骨架中間 | 收回 v2 時吃掉使用者的 `fi` |
 | `native-omz` | 工作站：手寫的完整 omz 設定 | 把使用者的骨架當成 v2 收走 |
-| `has-desktop` | 真的有桌面 | 該裝字型卻跳過 |
+| `has-desktop` | 真的有桌面 | 該裝字型卻跳過；`sha256sum` 讀檔失敗時誤報「沒有 sha256sum」 |
 | `forwarded-display` | 沒桌面，但 ssh 帶了 X11 forwarding | `$DISPLAY` 有值就以為有桌面 |
-| `hook-fallback` | 共用主機：sudo 要密碼又沒有 tty | 新建 `.bash_profile` 讓 `.profile` 不再被讀 |
+| `hook-fallback` | 共用主機：sudo 要密碼又沒有 tty | 新建 `.bash_profile` 讓 `.profile` 不再被讀；VS Code 終端機進不了 zsh；`--rollback` 還原不了 hook |
 | `ancient-awk` | 樹莓派的 mawk 1.3.3（1996 年版） | `[[:space:]]` 不報錯但永遠比對不到 |
 | `dotfiles-symlink` | `.zshrc` 是 stow / chezmoi 建的 symlink | symlink 被換成一般檔案 |
-| `sticky-options` | 第一次帶了 `--omz-update reminder --no-chsh`，之後都不帶 | 選項悄悄變回預設值 |
+| `sticky-options` | 第一次帶了 `--omz-update reminder --no-chsh`，之後都不帶 | 選項悄悄變回預設值；`zsh-p10k update` 沒沿用選項、sha256 對不上還照跑 |
+| `nonascii-home` | 家目錄有中文 | zsh 寫不了 `.zwc` 和 p10k 快取，每開一次視窗就印錯誤 |
+
+`zsh-p10k update` 的測試用 `ZSH_P10K_RELEASE_URL` 指到 `file://` 的假 Release，不連 GitHub。
 | `font-fail` | 字型的網址一律下載失敗 | 字型沒裝到，結尾還說裝好了 |
 | `external-p10k` | `.zshrc` 自己 source 外部的 p10k | 多 clone 一份、oh-my-zsh 去找不存在的主題 |
 | `self-build` | 沒有 zsh 也沒有 sudo | 自行編譯那條路壞掉沒人發現 |
