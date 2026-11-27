@@ -1,6 +1,13 @@
 # zsh-p10k-installer
 
 裝好 zsh + oh-my-zsh + Powerlevel10k，而且重跑幾次都不會弄丟你原本的設定。
+Linux、macOS、Windows（Git Bash）都能用；Windows 的步驟在下面「Windows 10 / 11」那一段。
+
+裝好之後打指令時：
+
+- **自動補字**（zsh-autosuggestions）：打到一半，後面會用灰字接上你以前打過的指令，按 `→` 或 `End` 整句收下
+- **語法上色**（fast-syntax-highlighting）：指令打錯字會變紅，按 Enter 之前就看得出來
+- **Tab 補完**（zsh-completions）：`git`、`docker` 這類指令的子命令和參數按 Tab 會列出來
 
 ```bash
 curl -fsSL https://github.com/esp8266good/zsh-p10k-installer/releases/latest/download/install-zsh-p10k.sh -o ~/install-zsh-p10k.sh && bash ~/install-zsh-p10k.sh
@@ -108,8 +115,32 @@ macOS 開新視窗是 login shell，會跑 `/etc/zprofile` 裡的 `path_helper`�
 
 ## Windows 10 / 11
 
-在 [Git for Windows](https://git-scm.com/downloads/win) 的 **Git Bash** 裡執行上面的安裝指令。
-**不需要 WSL、虛擬化，也不需要系統管理員權限。**
+**不需要 WSL、虛擬化，也不需要系統管理員權限。** 只要 Git for Windows 附的 Git Bash。
+
+1. 沒有 Git for Windows 的話，先到 <https://git-scm.com/downloads/win> 下載安裝（選項都用預設就好）。
+2. 開始功能表搜尋「**Git Bash**」打開（不是 PowerShell，也不是「命令提示字元」）。
+3. 貼上這行，按 Enter：
+
+   ```bash
+   curl -fsSL https://github.com/esp8266good/zsh-p10k-installer/releases/latest/download/install-zsh-p10k.sh -o ~/install-zsh-p10k.sh && bash ~/install-zsh-p10k.sh
+   ```
+
+4. 腳本先印報告，按 Enter 開始。要下載 zsh、oh-my-zsh、p10k 和字型，網路正常的話幾分鐘內裝完。
+5. 把 Git Bash 視窗關掉，重開一個：提示列變成 p10k 的樣子就是進了 zsh。
+   用 Windows Terminal 的話，分頁旁的下拉選單多了一個「**Git Bash (zsh)**」，字型已經設好。
+6. 圖示變成方塊或問號時，把終端機字型改成 **MesloLGS NF**（字型腳本已經裝好了）：
+
+   | 終端機 | 在哪裡改 |
+   |---|---|
+   | Git Bash 視窗 | 標題列按右鍵 → Options → Text → Font |
+   | Windows Terminal | 用「Git Bash (zsh)」設定檔就不用改；要設成預設：設定 → 啟動 → 預設設定檔 |
+   | VS Code | `settings.json` 加 `"terminal.integrated.fontFamily": "MesloLGS NF"` |
+
+   字型清單裡找不到的話，把終端機全部關掉重開；還是沒有就登出再登入一次。
+
+試試自動補字：打 `git status` 按 Enter，再打 `git st`，後面會出現灰色的 `atus`，按 `→` 就補上。
+
+腳本在 Windows 上做的事：
 
 | 情況 | 腳本怎麼處理 |
 |---|---|

@@ -104,6 +104,19 @@ crlf_files() {
     | xargs -0 grep -lU "$(printf '\r')" 2>/dev/null | wc -l | tr -d ' '
 }
 
+# 自動補字（zsh-autosuggestions）：外掛有載入，而且打一半的指令會從 history 找到建議。
+# 沒有 tty 時 zle 不會跑，所以直接叫它找建議的那個函式，不看畫面上的灰字。
+# 指令要從 stdin 一行一行餵：zsh -c 底下 $history 永遠是空的，外掛什麼都找不到。
+check_autosuggest() {
+  local h="$1" got
+  check "zsh-autosuggestions 有載入" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[_zsh_autosuggest_start]}" | tail -1)" = 1 ]'
+  # zsh 會把餵進去的指令回顯到輸出裡，標記寫成 "AS""=[" 讓回顯的那份對不上，只抓得到真的印出來的。
+  got="$(printf '%s\n' 'print -s "git status --short"' '_zsh_autosuggest_strategy_history "git sta"; print -r -- "AS""=[$suggestion]"' \
+    | in_zsh "$h" -i | tr -d '\r' | grep -ao 'AS=\[[^]]*\]' | tail -1)"
+  check "打 git sta 會建議 git status --short" '[ "$got" = "AS=[git status --short]" ]'
+  [ "$got" = "AS=[git status --short]" ] || printf '    | 拿到：%s\n' "$got"
+}
+
 CLEAN_HOME=""
 ensure_clean_home() {
   [ -n "$CLEAN_HOME" ] && return 0
@@ -142,6 +155,7 @@ t_clean() {
   err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null)"
   check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
   check "p10k 真的有載入" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[p10k]}" | tail -1)" = 1 ]'
+  check_autosuggest "$h"
   check "字型目錄沒有留下 .part" '[ -z "$(find "$(fonts_dir "$h")" -name "*.part" | head -1)" ]'
   check "沒有留下 zsh-msys.new" '[ ! -e "$h/.local/zsh-msys.new" ]'
   check "報告沒有叫人跑不存在的 chsh" '! out_has "chsh -s"'
@@ -175,6 +189,7 @@ t_nonascii_home() {
   check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
   check "四個字型都在" '[ "$(fonts_count "$h")" = 4 ]'
   check "p10k 還是載得起來" '[ "$(in_zsh "$h" -i -c "print -r -- \${+functions[p10k]}" | tail -1)" = 1 ]'
+  check_autosuggest "$h"
   err="$(HOME="$h" TERM=xterm-256color "$(zsh_exe "$h")" -i -c exit 2>&1 >/dev/null)"
   check "zsh -i 啟動沒有錯誤輸出" '[ -z "$err" ]'
   [ -z "$err" ] || printf '%s\n' "$err" | head -5 | sed 's/^/    | /'
