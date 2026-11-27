@@ -146,6 +146,7 @@ t_clean() {
   check "exit 0" '[ "$RC" -eq 0 ]'
   check "zsh.exe 裝好了" '[ -x "$(zsh_exe "$h")" ]'
   check "沒有呼叫 sudo" 'no_sudo_called'
+  check "講明開 Git Bash 時由 hook 切進 zsh" 'out_has "開 Git Bash 時由這段 hook 切進 zsh"'
   check "zsh 的動態模組載得起來" '[ "$(in_zsh "$h" -c "zmodload zsh/datetime && print ok")" = ok ]'
   check "zsh 的內建函式找得到" '[ "$(in_zsh "$h" -c "autoload -Uz is-at-least && is-at-least 5.0 && print ok")" = ok ]'
   check "裝進去的 zsh 腳本沒有被轉成 CRLF" '[ "$(crlf_files "$h")" = 0 ]'
@@ -159,6 +160,9 @@ t_clean() {
   check "字型目錄沒有留下 .part" '[ -z "$(find "$(fonts_dir "$h")" -name "*.part" | head -1)" ]'
   check "沒有留下 zsh-msys.new" '[ ! -e "$h/.local/zsh-msys.new" ]'
   check "報告沒有叫人跑不存在的 chsh" '! out_has "chsh -s"'
+  # Windows 本來就沒有 chsh、本來就走 hook：乾淨的安裝不該有任何 WARN，報告也不該講成「走不通」。
+  check "乾淨安裝沒有任何 [WARN]" '! out_has "[WARN]"'
+  check "報告沒有把 Windows 講成 chsh 走不通" '! out_has "chsh 走不通"'
 }
 
 # 使用者名稱有空白的帳號，HOME 就長這樣。

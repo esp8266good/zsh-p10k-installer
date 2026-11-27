@@ -25,7 +25,7 @@ set -euo pipefail
 # 常數
 # ---------------------------------------------------------------------------
 
-SCRIPT_VERSION="3.5.0"
+SCRIPT_VERSION="3.5.1"
 
 # awk 相容性：這支腳本裡所有 awk 程式一律不准用 POSIX 字元類別（[[:space:]] 之類）。
 #
@@ -1236,11 +1236,13 @@ print_report() {
   if [ "$DET_NEED_CHSH" -eq 1 ]; then
     case "${DET_CHSH_METHOD%%:*}" in
       hook)
-        printf '  ~/.bash_profile         %schsh 走不通（%s），\n' "$C_YEL" "${DET_CHSH_METHOD#*:}"
-        printf '                          改裝一個只在互動式 login shell 生效的 auto-start hook。%s\n' "$C_RESET"
         if [ "$IS_WINDOWS" -eq 1 ]; then
+          # Windows 本來就沒有 chsh，hook 是正規做法，不是退路：不用黃字，也不講「走不通」。
+          printf '  ~/.bash_profile         加一個只在互動式 login shell 生效的 auto-start hook。\n'
           printf '                          Windows 沒有 login shell 可以改，開 Git Bash 時由這段 hook 切進 zsh。\n'
         else
+          printf '  ~/.bash_profile         %schsh 走不通（%s），\n' "$C_YEL" "${DET_CHSH_METHOD#*:}"
+          printf '                          改裝一個只在互動式 login shell 生效的 auto-start hook。%s\n' "$C_RESET"
           printf '                          login shell 仍然是 %s。要真的改請自己跑：chsh -s %s\n' \
             "$DET_LOGIN_SHELL" "$DET_ZSH_PATH"
         fi
@@ -2560,6 +2562,12 @@ change_login_shell() {
   local target="$DET_ZSH_PATH"
   [ -x "$target" ] || { warn "找不到可執行的 zsh，略過 login shell 變更。"; DET_NEED_HOOK=1; return 0; }
 
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    # Git Bash 沒有 chsh 是正常的，接下來裝 hook 就是 Windows 的做法，不該用 WARN 嚇人。
+    info "Windows 沒有 login shell 可以改，開 Git Bash 時改由 ~/.bash_profile 的 hook 切進 zsh。"
+    DET_NEED_HOOK=1
+    return 0
+  fi
   if ! has_command chsh; then
     warn "沒有 chsh，無法變更 login shell。"
     DET_NEED_HOOK=1
@@ -2646,7 +2654,7 @@ EOF
     remove_hook
   fi
 
-  info "login shell 沒改成，改在 ~/.bash_profile 裝一個保守的 auto-start hook。"
+  [ "$IS_WINDOWS" -eq 1 ] || info "login shell 沒改成，改在 ~/.bash_profile 裝一個保守的 auto-start hook。"
   { printf '\n'; gen_hook_block "$target"; } >> "$HOME/.bash_profile"
   ok "已寫入 ~/.bash_profile hook（指向 ${target}）"
 }
